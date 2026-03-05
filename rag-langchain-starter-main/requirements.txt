@@ -1,0 +1,27 @@
+# Core LangChain
+langchain
+langchain-community
+langchain-core
+
+# LLM Providers
+langchain-openai          # OpenAI/ChatGPT
+langchain-google-genai    # Google Gemini
+# langchain-ollama        # Uncomment if using Ollama
+
+# Vector Store & Embeddings
+faiss-cpu                 # FAISS vector store (use faiss-gpu for GPU support)
+chromadb                  # Chroma vector store
+sentence-transformers
+
+# Document Loaders
+pypdf
+markdown-it-py
+python-docx           # Word documents
+openpyxl              # Excel (.xlsx)
+xlrd                  # Excel (.xls)
+unstructured          # Multi-format document processing
+
+# Utilities
+python-dotenv
+streamlit
+hf_xet

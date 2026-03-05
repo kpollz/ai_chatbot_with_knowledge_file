@@ -1,0 +1,17 @@
+# Core LangChain
+langchain
+langchain-community
+langchain-core
+
+# LLM Providers
+langchain-google-genai    # Google Gemini
+langchain-openai          # OpenAI
+
+# Excel & Database
+pandas
+openpyxl                  # Excel (.xlsx)
+xlrd                      # Excel (.xls)
+
+# Utilities
+python-dotenv
+streamlit
