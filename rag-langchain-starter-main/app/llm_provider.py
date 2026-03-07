@@ -111,20 +111,10 @@ class OllamaProvider(BaseLLMProvider):
 
 class CustomLLMProvider(BaseLLMProvider):
     """
-    Template for custom company LLM integration.
+    Template for OpenAI-compatible custom LLM integration.
     
-    This class provides a starting point for integrating your company's
-    proprietary LLM. Modify the get_llm() method to return your custom
-    LangChain-compatible LLM instance.
-    
-    Example usage:
-    1. If your company has an OpenAI-compatible API:
-       - Set CUSTOM_LLM_BASE_URL and CUSTOM_LLM_API_KEY in .env
-       - This provider will automatically work
-    
-    2. If you have a completely custom LLM:
-       - Create a custom LangChain LLM class
-       - Modify get_llm() to return an instance of your class
+    Use this if your company's LLM has an OpenAI-compatible API endpoint.
+    For company-specific API formats, use CompanyLLMProvider instead.
     """
     
     def __init__(self, model: str = "custom-model", temperature: float = 0,
@@ -140,11 +130,7 @@ class CustomLLMProvider(BaseLLMProvider):
             raise RuntimeError("CUSTOM_LLM_BASE_URL not set. Please set it in your .env file.")
     
     def get_llm(self):
-        """
-        Return your custom LLM instance.
-        
-        Option 1: If your LLM has an OpenAI-compatible API:
-        """
+        """Return a ChatOpenAI instance with custom base_url."""
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             model=self.model,
@@ -153,30 +139,51 @@ class CustomLLMProvider(BaseLLMProvider):
             base_url=self.base_url,
             **self.kwargs
         )
+
+
+class CompanyLLMProvider(BaseLLMProvider):
+    """
+    Company LLM Provider using the custom ChatCompanyLLM.
+    
+    This provider uses the ChatCompanyLLM class which extends BaseChatModel
+    and communicates with the company's proprietary API format.
+    
+    Available models:
+    - Gauss2.3
+    - Gauss2.3 Think
+    - GaussO Flash
+    - GaussO Flash (S)
+    - GaussO4
+    - GaussO4 Thinking
+    
+    Or use custom_model_id and custom_model_url for additional models.
+    """
+    
+    def __init__(self, model: str = "Gauss2.3", temperature: float = 0,
+                 api_key: Optional[str] = None,
+                 custom_model_id: Optional[str] = None,
+                 custom_model_url: Optional[str] = None,
+                 **kwargs):
+        super().__init__(model, temperature, **kwargs)
+        self.api_key = api_key or os.getenv("COMPANY_LLM_API_KEY")
+        self.custom_model_id = custom_model_id or os.getenv("COMPANY_LLM_MODEL_ID")
+        self.custom_model_url = custom_model_url or os.getenv("COMPANY_LLM_MODEL_URL")
         
-        """
-        Option 2: If you have a completely custom LLM, create your own class:
+        if not self.api_key:
+            raise RuntimeError("COMPANY_LLM_API_KEY not set. Please set it in your .env file.")
+    
+    def get_llm(self):
+        """Return a ChatCompanyLLM instance."""
+        from company_chat_model import ChatCompanyLLM
         
-        from langchain_core.language_models.chat_models import BaseChatModel
-        from langchain_core.messages import BaseMessage, AIMessage
-        from typing import List, Optional
-        
-        class MyCompanyLLM(BaseChatModel):
-            def _generate(self, messages: List[BaseMessage], ...):
-                # Your custom implementation
-                response = requests.post(
-                    self.base_url + "/chat",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"messages": [m.content for m in messages]}
-                )
-                return AIMessage(content=response.json()["text"])
-            
-            @property
-            def _llm_type(self) -> str:
-                return "my-company-llm"
-        
-        return MyCompanyLLM(model=self.model, temperature=self.temperature, ...)
-        """
+        return ChatCompanyLLM(
+            model=self.model,
+            api_key=self.api_key,
+            temperature=self.temperature,
+            custom_model_id=self.custom_model_id,
+            custom_model_url=self.custom_model_url,
+            **self.kwargs
+        )
 
 
 class LLMFactory:
@@ -196,6 +203,7 @@ class LLMFactory:
         "gemini": GeminiProvider,
         "ollama": OllamaProvider,
         "custom": CustomLLMProvider,
+        "company": CompanyLLMProvider,
     }
     
     @classmethod
