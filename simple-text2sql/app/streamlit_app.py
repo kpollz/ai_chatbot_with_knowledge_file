@@ -14,7 +14,7 @@ with st.sidebar:
     st.markdown("""
     1. Database and schema are pre-configured
     2. Just type your question
-    3. View the generated SQL and results
+    3. View the generated SQL, results, and answer
     
     **Example questions:**
     - "Show all employees"
@@ -39,19 +39,29 @@ if prompt := st.chat_input("Ask a question..."):
         st.markdown(prompt)
     
     with st.chat_message("assistant"):
-        with st.spinner("Generating SQL..."):
+        with st.spinner("Processing..."):
             try:
                 result = text2sql(prompt)
                 
-                st.code(result["sql"], language="sql")
-                st.caption(f"Found {result['row_count']} rows")
-                
-                if result["results"]:
-                    st.dataframe(result["results"], use_container_width=True)
+                if result.get("error"):
+                    st.error(f"❌ Error: {result['error']}")
+                    response = f"Error: {result['error']}"
                 else:
-                    st.info("No results found.")
+                    # Show natural language answer first
+                    st.markdown("### 💡 Answer")
+                    st.markdown(result["answer"])
+                    
+                    # Show SQL query in expander
+                    with st.expander("🔍 View SQL Query", expanded=False):
+                        st.code(result["sql"], language="sql")
+                    
+                    # Show raw results in expander
+                    if result["results"]:
+                        with st.expander(f"📊 View Raw Data ({result['row_count']} rows)", expanded=False):
+                            st.dataframe(result["results"], use_container_width=True)
+                    
+                    response = f"{result['answer']}\n\n```sql\n{result['sql']}\n```"
                 
-                response = f"```sql\n{result['sql']}\n```\n\n{result['row_count']} rows"
             except Exception as e:
                 response = f"❌ Error: {str(e)}"
                 st.error(response)
