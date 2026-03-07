@@ -1,0 +1,12 @@
+# LangGraph
+langgraph
+
+# LangChain Core
+langchain-core
+langchain-community
+
+# Utilities
+python-dotenv
+requests
+pydantic
+streamlit
