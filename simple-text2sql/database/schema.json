@@ -1,0 +1,26 @@
+{
+  "tables": [
+    {
+      "name": "employees",
+      "description": "Employee information",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Employee ID (primary key)"},
+        {"name": "name", "type": "TEXT", "description": "Full name"},
+        {"name": "department", "type": "TEXT", "description": "Department name"},
+        {"name": "salary", "type": "REAL", "description": "Monthly salary"},
+        {"name": "hire_date", "type": "TEXT", "description": "Hire date (YYYY-MM-DD)"}
+      ]
+    },
+    {
+      "name": "products",
+      "description": "Product catalog",
+      "columns": [
+        {"name": "id", "type": "INTEGER", "description": "Product ID"},
+        {"name": "name", "type": "TEXT", "description": "Product name"},
+        {"name": "category", "type": "TEXT", "description": "Product category"},
+        {"name": "price", "type": "REAL", "description": "Unit price"},
+        {"name": "stock", "type": "INTEGER", "description": "Stock quantity"}
+      ]
+    }
+  ]
+}
