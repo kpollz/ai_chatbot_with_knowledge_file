@@ -1,5 +1,6 @@
 """Company LLM Chat Model"""
 
+import time
 import requests
 from typing import Any, List, Optional, Dict
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -8,6 +9,7 @@ from langchain_core.outputs import ChatResult, ChatGeneration
 from pydantic import Field
 
 from config import COMPANY_LLM_API_KEY, COMPANY_LLM_MODEL_ID, COMPANY_LLM_MODEL_URL
+from logger import logger
 
 COMPANY_MODELS = {
     "Gauss2.3": {"model-id": "model-id", "model-url": "https://mycompany.com/api/v1/run/session_id"},
@@ -46,22 +48,44 @@ class ChatCompanyLLM(BaseChatModel):
                 }
             }
         }
-        resp = requests.post(config["model-url"], headers=headers, json=data, timeout=self.timeout)
-        resp.raise_for_status()
-        return resp.json()["outputs"][0]["outputs"][0]["results"]["text"]["text"]
+        
+        logger.info(f"Calling Company LLM: {self.model}")
+        start_time = time.time()
+        
+        try:
+            resp = requests.post(config["model-url"], headers=headers, json=data, timeout=self.timeout)
+            resp.raise_for_status()
+            
+            elapsed = time.time() - start_time
+            logger.info(f"LLM response received in {elapsed:.2f}s")
+            
+            result = resp.json()["outputs"][0]["outputs"][0]["results"]["text"]["text"]
+            logger.debug(f"Response length: {len(result)} chars")
+            return result
+            
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"LLM API call failed after {elapsed:.2f}s: {e}")
+            raise
 
     def _generate(self, messages: List[BaseMessage], **kwargs) -> ChatResult:
+        logger.info(f"Generating response for {len(messages)} messages")
+        
         system, user = "", ""
         for m in messages:
             if isinstance(m, SystemMessage):
                 system = m.content
+                logger.debug("Found system message")
             elif isinstance(m, HumanMessage):
                 user = m.content
+                logger.debug(f"User message: {user[:50]}...")
+        
         text = self._call_api(user, system)
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
 
 
 def get_llm():
+    logger.info("Creating LLM instance")
     return ChatCompanyLLM(
         model="Gauss2.3",
         api_key=COMPANY_LLM_API_KEY,
