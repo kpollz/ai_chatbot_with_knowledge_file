@@ -6,6 +6,7 @@ RAG (Retrieval-Augmented Generation):
 3. Get a grounded answer + citations.
 """
 
+import time
 from typing import List, Dict, Optional
 from pathlib import Path
 from langchain_core.prompts import PromptTemplate
@@ -17,6 +18,8 @@ from config import TOP_K
 from llm_provider import get_llm as get_llm_provider
 # Import the vector store wrapper module
 from vector_store_provider import get_vector_store_provider, VectorStoreFactory
+# Import logger
+from logger import logger, log_time, Timer
 
 
 # ---- Prompt templates ----
@@ -68,21 +71,24 @@ class RAGPipeline:
         self._initialized = False
         self._chat_history: List[Dict] = []
     
+    @log_time("Initialize RAG Pipeline")
     def initialize(self):
         """Load LLM and embeddings. Called automatically on first use or manually."""
         if self._initialized:
             return
         
         # Load LLM provider
-        llm_provider = get_llm_provider()
-        self._llm = llm_provider.get_llm()
+        with Timer("Load LLM"):
+            llm_provider = get_llm_provider()
+            self._llm = llm_provider.get_llm()
         
         # Load embeddings (shared between ingest and retrieve)
         from config import EMBED_MODEL
-        kwargs = {}
-        if self._cache_folder:
-            kwargs["cache_folder"] = self._cache_folder
-        self._embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL, **kwargs)
+        with Timer("Load Embeddings"):
+            kwargs = {}
+            if self._cache_folder:
+                kwargs["cache_folder"] = self._cache_folder
+            self._embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL, **kwargs)
         
         self._initialized = True
     
@@ -101,6 +107,7 @@ class RAGPipeline:
             provider, persist_dir, self._embeddings
         )
     
+    @log_time("Load Vector Store")
     def load_vector_store(self):
         """Load the vector store from disk."""
         if self._vs_provider is None:
@@ -149,6 +156,7 @@ class RAGPipeline:
     def clear_history(self):
         """Clear the conversation history."""
         self._chat_history = []
+        logger.info("Chat history cleared")
     
     def answer(self, question: str, k: int = TOP_K, use_history: bool = False) -> Dict:
         """
@@ -162,6 +170,8 @@ class RAGPipeline:
         Returns:
             Dict with 'answer' (str) and 'citations' (list)
         """
+        logger.info(f"Processing question: {question[:50]}...")
+        
         # Ensure initialized
         if not self._initialized:
             self.initialize()
@@ -170,7 +180,9 @@ class RAGPipeline:
         retriever = self.get_retriever(k=k)
         
         # Retrieve relevant documents
-        docs = retriever.invoke(question)
+        with Timer(f"Retrieve {k} documents"):
+            docs = retriever.invoke(question)
+        logger.info(f"Retrieved {len(docs)} documents")
         
         # Format context
         context = self._format_context(docs)
@@ -183,15 +195,12 @@ class RAGPipeline:
                 context=context,
                 chat_history=chat_history
             )
-            print(chat_history)
-            print("------------------------")
-            print(context)
-        
         else:
             prompt = ANSWER_PROMPT.format(question=question, context=context, chat_history="None")
         
         # Generate answer
-        resp = self._llm.invoke(prompt)
+        with Timer("LLM generate answer"):
+            resp = self._llm.invoke(prompt)
         
         # Add to history
         self._chat_history.append({"role": "user", "content": question})
@@ -205,9 +214,10 @@ class RAGPipeline:
                 "n": i,
                 "source": meta.get("source", "unknown"),
                 "page": meta.get("page", None),
-                "snippet": d.page_content[:200].replace("\n", " ") + ("…" if len(d.page_content) > 200 else "")
+                "snippet": d.page_content[:200].replace("\n", " ") + ("..." if len(d.page_content) > 200 else "")
             })
         
+        logger.info("Answer generated successfully")
         return {"answer": resp.content, "citations": cites}
     
     @property
@@ -242,6 +252,7 @@ class IngestPipeline:
         self._embeddings = None
         self._vs_provider = None
     
+    @log_time("Initialize Ingest Pipeline")
     def initialize(self):
         """Initialize embeddings."""
         if self._embeddings is not None:
@@ -266,6 +277,7 @@ class IngestPipeline:
             provider, persist_dir, self._embeddings
         )
     
+    @log_time("Ingest Documents")
     def ingest_documents(self, documents: List[Document], 
                          chunk_size: int = 800, 
                          chunk_overlap: int = 120) -> int:
@@ -285,14 +297,17 @@ class IngestPipeline:
         
         # Split documents into chunks
         from langchain_text_splitters import RecursiveCharacterTextSplitter
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size, 
-            chunk_overlap=chunk_overlap
-        )
-        chunks = splitter.split_documents(documents)
+        with Timer("Split documents into chunks"):
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size, 
+                chunk_overlap=chunk_overlap
+            )
+            chunks = splitter.split_documents(documents)
+        logger.info(f"Created {len(chunks)} chunks from {len(documents)} documents")
         
         # Create vector store
-        self._vs_provider.from_documents(chunks)
+        with Timer("Create vector store"):
+            self._vs_provider.from_documents(chunks)
         
         return len(chunks)
 

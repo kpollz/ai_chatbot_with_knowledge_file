@@ -9,12 +9,14 @@ This module handles:
 
 import os
 import sqlite3
+import time
 import pandas as pd
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from config import DB_PATH, TABLE_NAME
 from llm_provider import get_llm
+from logger import logger, Timer, log_time
 
 
 class Text2SQLPipeline:
@@ -36,8 +38,10 @@ class Text2SQLPipeline:
     def initialize(self):
         """Initialize the LLM."""
         if self.llm is None:
-            self.llm = get_llm()
+            with Timer("Initialize LLM"):
+                self.llm = get_llm()
     
+    @log_time("Load Excel to Database")
     def load_excel_to_db(self, file_path: str, table_name: str = None) -> Tuple[bool, str, int]:
         """
         Load an Excel file into SQLite database.
@@ -51,7 +55,9 @@ class Text2SQLPipeline:
         """
         try:
             # Read Excel file
+            logger.info(f"Reading Excel file: {file_path}")
             df = pd.read_excel(file_path)
+            logger.info(f"Found {len(df)} rows, {len(df.columns)} columns")
             
             # Clean column names (replace spaces with underscores)
             df.columns = [col.strip().replace(' ', '_') for col in df.columns]
@@ -75,6 +81,7 @@ class Text2SQLPipeline:
             self.table_name = table_name or TABLE_NAME
             
             # Write to SQLite
+            logger.info(f"Writing to SQLite table: {self.table_name}")
             df.to_sql(self.table_name, self.connection, if_exists='replace', index=False)
             
             # Generate schema info
@@ -83,6 +90,7 @@ class Text2SQLPipeline:
             return True, f"Loaded {len(df)} rows into table '{self.table_name}'", len(df)
             
         except Exception as e:
+            logger.error(f"Error loading file: {str(e)}")
             return False, f"Error loading file: {str(e)}", 0
     
     def _generate_schema_info(self, df: pd.DataFrame):
@@ -132,6 +140,7 @@ class Text2SQLPipeline:
         """Get the current database schema info."""
         return self.schema_info or "No database loaded"
     
+    @log_time("Execute SQL Query")
     def execute_sql(self, query: str) -> Tuple[List[Dict], str]:
         """
         Execute a SQL query and return results.
@@ -151,13 +160,17 @@ class Text2SQLPipeline:
             if not query_upper.startswith('SELECT'):
                 return [], "Only SELECT queries are allowed."
             
+            logger.info(f"Executing SQL: {query[:100]}...")
             df = pd.read_sql_query(query, self.connection)
             results = df.to_dict(orient='records')
+            logger.info(f"Query returned {len(results)} rows")
             return results, ""
             
         except Exception as e:
+            logger.error(f"SQL Error: {str(e)}")
             return [], f"SQL Error: {str(e)}"
     
+    @log_time("Generate SQL from Question")
     def generate_sql(self, question: str) -> str:
         """
         Generate SQL query from natural language question.
@@ -190,7 +203,12 @@ Generate a SQL query for the user's question. Return ONLY the SQL, no explanatio
         
         messages = [HumanMessage(content=prompt)]
         
+        logger.info("Calling LLM for SQL generation...")
+        start_time = time.time()
         response = self.llm.invoke(messages)
+        elapsed = time.time() - start_time
+        logger.info(f"LLM response received in {elapsed:.2f}s")
+        
         sql_query = response.content.strip()
         
         # Clean up the SQL query
@@ -208,6 +226,7 @@ Generate a SQL query for the user's question. Return ONLY the SQL, no explanatio
         Returns:
             Dict with answer, sql_query, and results
         """
+        logger.info(f"Processing question: {question}")
         self.initialize()
         
         if not self.connection:
@@ -244,6 +263,7 @@ Generate a SQL query for the user's question. Return ONLY the SQL, no explanatio
             }
             
         except Exception as e:
+            logger.error(f"Error: {str(e)}")
             return {
                 "answer": f"Error: {str(e)}",
                 "sql_query": "",
@@ -251,6 +271,7 @@ Generate a SQL query for the user's question. Return ONLY the SQL, no explanatio
                 "error": str(e)
             }
     
+    @log_time("Generate Answer from Results")
     def _generate_answer(self, question: str, sql_query: str, results: List[Dict]) -> str:
         """Generate natural language answer from SQL results."""
         
@@ -274,7 +295,12 @@ Provide a natural language answer based on these results. Be concise and informa
         
         messages = [HumanMessage(content=prompt)]
         
+        logger.info("Calling LLM for answer generation...")
+        start_time = time.time()
         response = self.llm.invoke(messages)
+        elapsed = time.time() - start_time
+        logger.info(f"LLM answer received in {elapsed:.2f}s")
+        
         return response.content
     
     def close(self):
@@ -282,3 +308,4 @@ Provide a natural language answer based on these results. Be concise and informa
         if self.connection:
             self.connection.close()
             self.connection = None
+            logger.info("Database connection closed")

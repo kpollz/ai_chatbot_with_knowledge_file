@@ -4,11 +4,14 @@ LLM Provider module for Text2SQL Application
 Supports multiple LLM providers:
 - gemini (default): Google's Gemini models
 - openai: OpenAI's GPT models
+- company: Company's proprietary LLM
 """
 
 import os
+import time
 from typing import Optional
 from config import LLM_PROVIDER, LLM_MODEL, LLM_TEMPERATURE, GOOGLE_API_KEY, OPENAI_API_KEY
+from logger import logger, log_time
 
 
 class LLMProvider:
@@ -28,13 +31,16 @@ class LLMProvider:
     def _create_llm(self):
         """Create the appropriate LLM based on provider."""
         provider = self._provider.lower()
+        logger.info(f"Creating LLM: provider={provider}, model={self._model}")
         
         if provider == "gemini":
             return self._create_gemini_llm()
         elif provider == "openai":
             return self._create_openai_llm()
+        elif provider == "company":
+            return self._create_company_llm()
         else:
-            raise ValueError(f"Unknown LLM provider: {provider}")
+            raise ValueError(f"Unknown LLM provider: {provider}. Available: gemini, openai, company")
     
     def _create_gemini_llm(self):
         """Create a Gemini LLM instance."""
@@ -61,6 +67,25 @@ class LLMProvider:
             model=self._model,
             temperature=LLM_TEMPERATURE,
             api_key=OPENAI_API_KEY,
+        )
+    
+    def _create_company_llm(self):
+        """Create a Company LLM instance."""
+        from company_chat_model import ChatCompanyLLM
+        
+        api_key = os.getenv("COMPANY_LLM_API_KEY")
+        custom_model_id = os.getenv("COMPANY_LLM_MODEL_ID")
+        custom_model_url = os.getenv("COMPANY_LLM_MODEL_URL")
+        
+        if not api_key:
+            raise ValueError("Set COMPANY_LLM_API_KEY in your .env file")
+        
+        return ChatCompanyLLM(
+            model=self._model,
+            api_key=api_key,
+            temperature=LLM_TEMPERATURE,
+            custom_model_id=custom_model_id,
+            custom_model_url=custom_model_url,
         )
 
 
