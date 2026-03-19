@@ -1,9 +1,15 @@
 """
 Pydantic schemas for request/response validation
+
+Note: SQLite is dynamically typed — TEXT columns may contain int/float values.
+We use coerce_numbers_to_str to handle this gracefully.
 """
 
 from pydantic import BaseModel
 from typing import Optional, List
+
+# Shared config: coerce numbers to str for SQLite compatibility
+_response_config = {"from_attributes": True, "coerce_numbers_to_str": True}
 
 
 # ---- Line ----
@@ -12,7 +18,7 @@ class LineResponse(BaseModel):
     LineID: int
     LineName: str
 
-    model_config = {"from_attributes": True}
+    model_config = _response_config
 
 
 # ---- Team ----
@@ -22,7 +28,7 @@ class TeamResponse(BaseModel):
     TeamName: Optional[str] = None
     LineID: int
 
-    model_config = {"from_attributes": True}
+    model_config = _response_config
 
 
 # ---- Machine ----
@@ -34,7 +40,7 @@ class MachineResponse(BaseModel):
     Serial: Optional[str] = None
     TeamID: int
 
-    model_config = {"from_attributes": True}
+    model_config = _response_config
 
 
 # ---- Issue ----
@@ -81,7 +87,7 @@ class IssueResponse(BaseModel):
     PIC: Optional[str] = None
     user_input: Optional[str] = None
 
-    model_config = {"from_attributes": True}
+    model_config = _response_config
 
 
 class IssueSearchResult(BaseModel):
@@ -98,4 +104,4 @@ class IssueSearchResult(BaseModel):
     MachineName: str
     LineName: str
 
-    model_config = {"from_attributes": True}
+    model_config = _response_config
