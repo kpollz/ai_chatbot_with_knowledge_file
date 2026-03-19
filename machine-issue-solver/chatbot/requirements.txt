@@ -1,0 +1,14 @@
+# LangGraph
+langgraph
+
+# LangChain Core
+langchain-core
+langchain-community
+
+# Async HTTP client (replaces requests)
+httpx
+
+# Utilities
+python-dotenv
+pydantic
+streamlit
