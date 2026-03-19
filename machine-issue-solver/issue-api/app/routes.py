@@ -80,9 +80,13 @@ async def search_issues(
         IssueSearchResult(
             IssueID=issue.IssueID,
             MachineID=issue.MachineID,
+            Date=issue.Date,
+            start_time=issue.start_time,
+            total_time=issue.total_time,
             hien_tuong=issue.hien_tuong,
             nguyen_nhan=issue.nguyen_nhan,
             khac_phuc=issue.khac_phuc,
+            PIC=issue.PIC,
             MachineName=machine_name_val,
             LineName=line_name_val,
         )
