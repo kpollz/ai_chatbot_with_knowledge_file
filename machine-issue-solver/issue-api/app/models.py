@@ -19,7 +19,7 @@ class Line(Base):
     __tablename__ = "Lines"
 
     LineID = Column(Integer, primary_key=True, autoincrement=True)
-    LineName = Column(Text, nullable=False)
+    LineName = Column(Text)
 
     teams = relationship("Team", back_populates="line", cascade="all, delete-orphan")
 

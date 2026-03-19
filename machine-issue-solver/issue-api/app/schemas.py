@@ -16,7 +16,7 @@ _response_config = {"from_attributes": True, "coerce_numbers_to_str": True}
 
 class LineResponse(BaseModel):
     LineID: int
-    LineName: str
+    LineName: Optional[str] = None
 
     model_config = _response_config
 
@@ -101,7 +101,7 @@ class IssueSearchResult(BaseModel):
     nguyen_nhan: Optional[str] = None
     khac_phuc: Optional[str] = None
     PIC: Optional[str] = None
-    MachineName: str
-    LineName: str
+    MachineName: Optional[str] = None
+    LineName: Optional[str] = None
 
     model_config = _response_config

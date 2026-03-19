@@ -14,4 +14,4 @@ DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 
 # API Server
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
-API_PORT = int(os.getenv("API_PORT", "8000"))
+API_PORT = int(os.getenv("API_PORT", "8888"))
