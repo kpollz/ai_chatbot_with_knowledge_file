@@ -1,0 +1,11 @@
+# FastAPI
+fastapi
+uvicorn[standard]
+
+# Async database
+sqlalchemy[asyncio]
+aiosqlite
+
+# Utilities
+python-dotenv
+pydantic
