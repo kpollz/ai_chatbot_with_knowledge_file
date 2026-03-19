@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Issue API (Sub-project 2)
-ISSUE_API_URL = os.getenv("ISSUE_API_URL", "http://localhost:8000")
+ISSUE_API_URL = os.getenv("ISSUE_API_URL", "http://localhost:8888")
 
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "company")

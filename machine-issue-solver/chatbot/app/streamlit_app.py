@@ -1,11 +1,11 @@
 """
-Streamlit UI for Machine Issue Solver (with message history & context limit)
+Streamlit UI for Machine Issue Solver (ReAct Agent with tool calling)
 """
 
 import asyncio
 import streamlit as st
 from graph import solve_issue
-from history import check_context_limit, estimate_tokens
+from history import check_context_limit
 from logger import logger
 
 
@@ -30,16 +30,17 @@ with st.sidebar:
     st.header("📋 Instructions")
     st.markdown("""
     **How to use:**
-    1. Enter your question about a machine issue
-    2. Include the **machine name** and **line number**
-    3. Press Enter to get a solution
+    1. Ask any question about machine issues
+    2. The chatbot will search the database when needed
+    3. You can also ask general questions
 
     **Example queries:**
     - "Toi can giai phap cho may CNC-01 tren Line 2"
     - "Machine Robot Arm o Line 1 bi loi gi?"
-    - "How to fix the issue on Packaging Machine at Line 3?"
+    - "Ban la ai?"
+    - "Co nhung may nao trong he thong?"
 
-    **Note:** The system will reject queries that don't include both machine name and line number.
+    **Follow-up:** You don't need to repeat the line number — the chatbot remembers context.
     """)
 
     st.divider()
@@ -90,27 +91,19 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=(context_sta
             "Consider starting a new session soon."
         )
 
-    # Process with LangGraph (async)
+    # Process with ReAct agent (async)
     with st.chat_message("assistant"):
         with st.spinner("Processing..."):
             try:
-                # Pass conversation history (exclude current message — it's the query)
+                # Pass conversation history (exclude current message)
                 history = st.session_state.messages[:-1]
                 result = run_async(solve_issue(prompt, history=history))
 
-                # Check if rejected
-                if result.get("rejection_reason"):
-                    response = f"⚠️ **Cannot Process Request**\n\n{result['rejection_reason']}"
-                    st.markdown(response)
-                elif result.get("error") and not result.get("solution"):
+                if result.get("error") and not result.get("response"):
                     response = f"❌ **Error**\n\n{result['error']}"
                     st.markdown(response)
                 else:
-                    # Show extracted info
-                    st.markdown(f"**Machine:** {result.get('machine_name', 'N/A')}")
-                    st.markdown(f"**Line:** {result.get('line_number', 'N/A')}")
-
-                    # Show issues found
+                    # Show issues if any were found during tool calls
                     issues = result.get("issues", [])
                     if issues:
                         with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
@@ -122,13 +115,9 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=(context_sta
                                 st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
                                 st.divider()
 
-                    # Show solution
-                    st.markdown("---")
-                    st.markdown("### 💡 Solution")
-                    solution = result.get("solution", "No solution generated.")
-                    st.markdown(solution)
-
-                    response = f"**Machine:** {result.get('machine_name')}\n\n**Solution:**\n{solution}"
+                    # Show agent response
+                    response = result.get("response", "No response generated.")
+                    st.markdown(response)
 
                 st.session_state.messages.append({"role": "assistant", "content": response})
 

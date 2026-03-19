@@ -1,282 +1,341 @@
 """
-LangGraph Workflow for Machine Issue Solver (async, calls Issue API)
+LangGraph ReAct Agent for Machine Issue Solver
 
-Workflow:
-1. extract_info: Extract machine_name and line_number from user query
-2. check_info: Check if we have enough information (conditional)
-3. query_database: Query Issue API for issues (HTTP call)
-4. generate_solution: Use LLM to generate solution from retrieved issues
+Architecture: Text-based tool calling (works with any LLM, no native function calling needed)
+
+Flow:
+  START -> agent -> (has tool call?) -> YES: tool_node -> agent (loop)
+                                     -> NO:  END (return response)
+
+The agent can:
+- Answer general questions directly (no tool call)
+- Search issues by machine + line via search_issues tool
+- List machines / lines for discovery
+- Use conversation history to maintain context across turns
 """
 
 from typing import TypedDict, Optional, List, Dict
 import json
+import re
 
 from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
-from api_client import search_issues
+from api_client import search_issues, list_machines, list_lines
 from history import format_history_for_prompt
 from logger import logger, Timer
 
 
-# ---- State Definition ----
+MAX_ITERATIONS = 3
+TOOL_CALL_PATTERN = re.compile(r'<tool_call>(.*?)</tool_call>', re.DOTALL)
+
+SYSTEM_PROMPT = """Ban la "Machine Issue Solver" — tro ly ky thuat chuyen ve cac van de may moc trong nha may.
+
+Nhiem vu cua ban:
+- Tra loi cac cau hoi ve van de may moc dua tren du lieu trong co so du lieu
+- Tra loi cac cau hoi chung ve ban than va kha nang cua ban
+- Su dung lich su hoi thoai de hieu ngu canh (vi du: neu nguoi dung da noi ve Line 2 truoc do, khong can hoi lai)
+
+Ban co the su dung cac tool sau:
+
+1. search_issues(machine_name: str, line_name: str)
+   Tim kiem cac van de lien quan den mot may cu the tren mot line cu the.
+   Tra ve danh sach cac van de voi trieu chung, nguyen nhan, va giai phap.
+
+2. list_machines()
+   Liet ke tat ca cac may co trong co so du lieu.
+
+3. list_lines()
+   Liet ke tat ca cac day chuyen san xuat.
+
+Cach su dung tool — bao gom CHINH XAC cu phap nay trong cau tra loi:
+<tool_call>{"tool": "search_issues", "args": {"machine_name": "CNC-01", "line_name": "Line 2"}}</tool_call>
+
+Quy tac:
+- Chi goi MOT tool moi lan
+- Neu khong can tool, tra loi truc tiep (KHONG bao gom <tool_call>)
+- Neu nguoi dung hoi cau hoi chung ("Ban la ai?", "Ban lam duoc gi?"), tra loi truc tiep
+- Neu thieu thong tin (ten may hoac line), hoi nguoi dung mot cach tu nhien thay vi tu choi
+- Su dung lich su hoi thoai de lay thong tin da biet (vi du: neu nguoi dung da noi ve Line 2, dung lai thong tin do)
+- Tra loi bang tieng Viet neu nguoi dung dung tieng Viet, tieng Anh neu dung tieng Anh"""
+
+
+# ---- State ----
+
 class GraphState(TypedDict):
-    """State that flows through the graph"""
-    query: str                          # Current user query
-    history: List[Dict[str, str]]       # Conversation history
-    machine_name: Optional[str]         # Extracted machine name
-    line_number: Optional[str]          # Extracted line number
-    has_enough_info: bool               # Whether we have enough info
-    rejection_reason: Optional[str]     # Reason for rejection
-    issues: List[Dict]                  # Retrieved issues from API
-    solution: Optional[str]             # Generated solution
-    error: Optional[str]               # Any error message
+    query: str                              # Current user query
+    history: List[Dict[str, str]]           # Conversation history
+    scratchpad: str                         # Agent reasoning + tool results log
+    pending_tool_call: Optional[Dict]       # Tool call to execute next
+    response: Optional[str]                 # Final response (set when done)
+    issues: List[Dict]                      # Issues found (for UI display)
+    iterations: int                         # Loop counter
+    error: Optional[str]                    # Error message
 
 
-# ---- Node Functions (async) ----
+# ---- Helpers ----
 
-async def extract_info_node(state: GraphState) -> dict:
-    """Extract machine_name and line_number from user query using LLM"""
-    logger.info("Node: extract_info")
+def parse_tool_call(text: str) -> Optional[Dict]:
+    """Extract tool call from LLM response text."""
+    match = TOOL_CALL_PATTERN.search(text)
+    if not match:
+        return None
+    try:
+        tool_call = json.loads(match.group(1).strip())
+        if "tool" in tool_call:
+            return tool_call
+        return None
+    except json.JSONDecodeError:
+        logger.warning(f"Failed to parse tool call JSON: {match.group(1)}")
+        return None
+
+
+def clean_response(text: str) -> str:
+    """Remove <tool_call> tags and clean up the response text."""
+    cleaned = TOOL_CALL_PATTERN.sub("", text).strip()
+    return cleaned
+
+
+def format_issues_for_scratchpad(issues: List[Dict]) -> str:
+    """Format issue list as readable text for the agent scratchpad."""
+    if not issues:
+        return "Khong tim thay van de nao."
+
+    lines = [f"Tim thay {len(issues)} van de:\n"]
+    for i, issue in enumerate(issues, 1):
+        lines.append(f"Van de {i}:")
+        lines.append(f"  Ngay: {issue.get('Date', 'N/A')}")
+        lines.append(f"  Hien tuong (Symptom): {issue.get('hien_tuong', 'N/A')}")
+        lines.append(f"  Nguyen nhan (Cause): {issue.get('nguyen_nhan', 'N/A')}")
+        lines.append(f"  Khac phuc (Solution): {issue.get('khac_phuc', 'N/A')}")
+        lines.append(f"  PIC: {issue.get('PIC', 'N/A')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# ---- Nodes ----
+
+async def agent_node(state: GraphState) -> dict:
+    """LLM agent: reasons about the query and optionally calls a tool."""
+    iteration = state.get("iterations", 0)
+    logger.info(f"Node: agent (iteration {iteration})")
 
     query = state["query"]
+    history = state.get("history", [])
+    scratchpad = state.get("scratchpad", "")
+
+    # Build user prompt
+    parts = []
+
+    # Conversation history
+    history_text = format_history_for_prompt(history)
+    if history_text:
+        parts.append(history_text)
+
+    # Current query
+    parts.append(f"Cau hoi hien tai cua nguoi dung: {query}")
+
+    # Scratchpad with tool results from previous iterations
+    if scratchpad:
+        parts.append(
+            f"\n{scratchpad}\n"
+            "Dua tren ket qua tool o tren, hay tra loi nguoi dung chi tiet va huu ich. "
+            "KHONG goi them tool neu khong can thiet."
+        )
+
+    user_prompt = "\n\n".join(parts)
+
     llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE)
 
-    extraction_prompt = f"""You are an information extraction assistant. Extract the following from the user's query:
-1. machine_name: The name of the machine (e.g., "Machine A", "CNC-01", "Robot Arm")
-2. line_number: The production line number or name (e.g., "Line 1", "L2", "Production Line A")
-
-User query: {query}
-
-IMPORTANT:
-- If the query mentions a specific machine name, extract it exactly as mentioned
-- If the query mentions a line number/name, extract it exactly as mentioned
-- Return ONLY a JSON object with no additional text
-
-Return JSON in this exact format:
-{{"machine_name": "extracted name or null", "line_number": "extracted number or null"}}"""
-
     try:
-        with Timer("LLM extraction"):
-            response = await llm.ainvoke(extraction_prompt)
+        with Timer("LLM agent call"):
+            response = await llm.ainvoke([
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=user_prompt),
+            ])
 
-        result_text = response.content.strip()
-        try:
-            start = result_text.find('{')
-            end = result_text.rfind('}') + 1
-            if start != -1 and end > start:
-                json_str = result_text[start:end]
-                extracted = json.loads(json_str)
-            else:
-                extracted = {"machine_name": None, "line_number": None}
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse JSON from LLM response: {result_text}")
-            extracted = {"machine_name": None, "line_number": None}
+        response_text = response.content.strip()
+        logger.info(f"Agent response: {len(response_text)} chars")
 
-        machine_name = extracted.get("machine_name")
-        line_number = extracted.get("line_number")
+        # Check for tool call
+        tool_call = parse_tool_call(response_text)
 
-        logger.info(f"Extracted - machine_name: {machine_name}, line_number: {line_number}")
+        if tool_call:
+            tool_name = tool_call.get("tool", "")
+            tool_args = tool_call.get("args", {})
+            logger.info(f"Agent wants tool: {tool_name}({tool_args})")
 
-        return {
-            "machine_name": machine_name,
-            "line_number": line_number
-        }
+            new_scratchpad = (
+                scratchpad
+                + f"\n--- Agent goi tool ---\n"
+                f"Tool: {tool_name}\n"
+                f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+            )
+
+            return {
+                "scratchpad": new_scratchpad,
+                "pending_tool_call": tool_call,
+            }
+        else:
+            # Final response — no tool call
+            final = clean_response(response_text)
+            logger.info("Agent produced final response")
+            return {"response": final, "pending_tool_call": None}
 
     except Exception as e:
-        logger.error(f"Extraction error: {e}")
+        logger.error(f"Agent error: {e}")
+        return {"error": str(e)}
+
+
+async def tool_node(state: GraphState) -> dict:
+    """Execute the pending tool call and append results to scratchpad."""
+    logger.info("Node: tool_node")
+
+    tool_call = state.get("pending_tool_call")
+    scratchpad = state.get("scratchpad", "")
+
+    if not tool_call:
+        logger.warning("tool_node called but no pending tool call")
         return {
-            "machine_name": None,
-            "line_number": None,
-            "error": str(e)
+            "scratchpad": scratchpad + "\n--- Tool Result ---\nError: no tool call found\n",
+            "pending_tool_call": None,
+            "iterations": state.get("iterations", 0) + 1,
         }
 
+    tool_name = tool_call.get("tool", "")
+    tool_args = tool_call.get("args", {})
+    result_text = ""
+    issues_found = []
 
-async def check_info_node(state: GraphState) -> dict:
-    """Check if we have enough information to proceed"""
-    logger.info("Node: check_info")
+    try:
+        if tool_name == "search_issues":
+            machine_name = tool_args.get("machine_name", "")
+            line_name = tool_args.get("line_name", "")
 
-    machine_name = state.get("machine_name")
-    line_number = state.get("line_number")
+            with Timer(f"Tool: search_issues({machine_name}, {line_name})"):
+                issues = await search_issues(machine_name, line_name)
 
-    has_enough = machine_name is not None and line_number is not None
-    has_enough = has_enough and machine_name.lower() != "null" and line_number.lower() != "null"
+            issues_found = issues
+            if not issues:
+                result_text = (
+                    f"Khong tim thay van de nao cho may '{machine_name}' "
+                    f"tren line '{line_name}'."
+                )
+            else:
+                result_text = format_issues_for_scratchpad(issues)
 
-    if not has_enough:
-        missing = []
-        if not machine_name or machine_name.lower() == "null":
-            missing.append("machine name")
-        if not line_number or line_number.lower() == "null":
-            missing.append("line number")
+        elif tool_name == "list_machines":
+            with Timer("Tool: list_machines"):
+                machines = await list_machines()
 
-        reason = f"Cannot proceed. Missing: {', '.join(missing)}. Please provide both machine name and line number."
-        logger.warning(reason)
-        return {
-            "has_enough_info": False,
-            "rejection_reason": reason
-        }
+            if not machines:
+                result_text = "Khong co may nao trong co so du lieu."
+            else:
+                items = [f"Co {len(machines)} may:\n"]
+                for m in machines:
+                    items.append(f"- {m.get('MachineName', 'N/A')} (ID: {m.get('MachineID', 'N/A')})")
+                result_text = "\n".join(items)
 
-    logger.info(f"Info check passed - machine: {machine_name}, line: {line_number}")
+        elif tool_name == "list_lines":
+            with Timer("Tool: list_lines"):
+                lines_data = await list_lines()
+
+            if not lines_data:
+                result_text = "Khong co line nao trong co so du lieu."
+            else:
+                items = [f"Co {len(lines_data)} line:\n"]
+                for ln in lines_data:
+                    items.append(f"- {ln.get('LineName', 'N/A')} (ID: {ln.get('LineID', 'N/A')})")
+                result_text = "\n".join(items)
+
+        else:
+            result_text = f"Tool '{tool_name}' khong ton tai. Cac tool kha dung: search_issues, list_machines, list_lines."
+
+    except Exception as e:
+        logger.error(f"Tool execution error: {e}")
+        result_text = f"Loi khi goi tool '{tool_name}': {e}"
+
+    new_scratchpad = scratchpad + f"\n--- Tool Result ---\n{result_text}\n"
+
     return {
-        "has_enough_info": True,
-        "rejection_reason": None
+        "scratchpad": new_scratchpad,
+        "pending_tool_call": None,
+        "issues": issues_found if issues_found else state.get("issues", []),
+        "iterations": state.get("iterations", 0) + 1,
     }
 
 
-async def query_database_node(state: GraphState) -> dict:
-    """Query issues via Issue API (HTTP call instead of direct SQL)"""
-    logger.info("Node: query_database")
+# ---- Routing ----
 
-    machine_name = state["machine_name"]
-    line_number = state["line_number"]
-
-    try:
-        with Timer("Issue API query"):
-            issues = await search_issues(machine_name, line_number)
-    except ConnectionError as e:
-        return {"issues": [], "error": str(e)}
-    except Exception as e:
-        return {"issues": [], "error": f"Failed to query issues: {e}"}
-
-    if not issues:
-        return {
-            "issues": [],
-            "error": f"No issues found for machine '{machine_name}' on line '{line_number}'"
-        }
-
-    return {"issues": issues}
-
-
-async def generate_solution_node(state: GraphState) -> dict:
-    """Generate solution using LLM based on retrieved issues and conversation history"""
-    logger.info("Node: generate_solution")
-
-    query = state["query"]
-    issues = state["issues"]
-    machine_name = state["machine_name"]
-    line_number = state["line_number"]
-    history = state.get("history", [])
-
-    # Format issues as context
-    context_lines = []
-    for i, issue in enumerate(issues, 1):
-        context_lines.append(f"""
-Issue {i}:
-- Ngay (Date): {issue.get('Date', 'N/A')}
-- Hien tuong (Symptom): {issue.get('hien_tuong', 'N/A')}
-- Nguyen nhan (Cause): {issue.get('nguyen_nhan', 'N/A')}
-- Khac phuc (Solution): {issue.get('khac_phuc', 'N/A')}
-- PIC: {issue.get('PIC', 'N/A')}
-""")
-    context = "\n".join(context_lines)
-
-    # Format conversation history
-    history_text = format_history_for_prompt(history)
-
-    llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE)
-
-    solution_prompt = f"""Ban la mot chuyen gia ky thuat. Dua tren cac van de da biet cua may, hay tra loi cau hoi cua nguoi dung.
-
-Thong tin may:
-- Ten may: {machine_name}
-- Day chuyen: {line_number}
-
-Cac van de da biet trong co so du lieu:
-{context}
-
-{history_text}
-
-Cau hoi cua nguoi dung: {query}
-
-Hay tra loi mot cach chi tiet va huu ich. Neu cau hoi lien quan den mot van de cu the, hay cung cap:
-1. Nguyen nhan co the co
-2. Cach khac phuc
-3. Cac luu y quan trong
-
-Tra loi bang tieng Viet:"""
-
-    try:
-        with Timer("LLM solution generation"):
-            response = await llm.ainvoke(solution_prompt)
-
-        solution = response.content
-        logger.info("Solution generated successfully")
-
-        return {"solution": solution}
-
-    except Exception as e:
-        logger.error(f"Solution generation error: {e}")
-        return {"solution": None, "error": str(e)}
-
-
-# ---- Routing Functions ----
-def route_after_check(state: GraphState) -> str:
-    """Route based on whether we have enough info"""
-    if state.get("has_enough_info"):
-        return "query_database"
-    else:
+def route_after_agent(state: GraphState) -> str:
+    """Route: response set → END, pending tool → tool_node, max iterations → END."""
+    if state.get("response") is not None:
         return END
+    if state.get("error") and not state.get("pending_tool_call"):
+        return END
+    if state.get("iterations", 0) >= MAX_ITERATIONS:
+        logger.warning("Max iterations reached")
+        return END
+    if state.get("pending_tool_call"):
+        return "tool_node"
+    # Fallback: no response and no tool call — shouldn't happen
+    return END
 
 
 # ---- Build Graph ----
-def build_graph():
-    """Build and compile the LangGraph workflow"""
 
+def build_graph():
+    """Build and compile the ReAct agent graph."""
     graph = StateGraph(GraphState)
 
-    # Add nodes
-    graph.add_node("extract_info", extract_info_node)
-    graph.add_node("check_info", check_info_node)
-    graph.add_node("query_database", query_database_node)
-    graph.add_node("generate_solution", generate_solution_node)
+    graph.add_node("agent", agent_node)
+    graph.add_node("tool_node", tool_node)
 
-    # Add edges
-    graph.add_edge(START, "extract_info")
-    graph.add_edge("extract_info", "check_info")
+    graph.add_edge(START, "agent")
     graph.add_conditional_edges(
-        "check_info",
-        route_after_check,
-        {
-            "query_database": "query_database",
-            END: END
-        }
+        "agent",
+        route_after_agent,
+        {"tool_node": "tool_node", END: END},
     )
-    graph.add_edge("query_database", "generate_solution")
-    graph.add_edge("generate_solution", END)
+    graph.add_edge("tool_node", "agent")  # Loop back
 
     return graph.compile()
 
 
-# Create global graph instance
+# Global graph instance
 app_graph = build_graph()
 
 
 async def solve_issue(query: str, history: List[Dict[str, str]] = None) -> dict:
     """
-    Main entry point to solve a machine issue (async).
+    Main entry point — process a user query through the ReAct agent.
 
     Args:
-        query: User's question about a machine issue
+        query: User's question
         history: Conversation history [{"role": "user"/"assistant", "content": "..."}]
 
     Returns:
-        dict with solution and metadata
+        dict with response, issues, error
     """
     logger.info(f"Processing query: {query}")
 
     initial_state = {
         "query": query,
         "history": history or [],
-        "machine_name": None,
-        "line_number": None,
-        "has_enough_info": False,
-        "rejection_reason": None,
+        "scratchpad": "",
+        "pending_tool_call": None,
+        "response": None,
         "issues": [],
-        "solution": None,
-        "error": None
+        "iterations": 0,
+        "error": None,
     }
 
     result = await app_graph.ainvoke(initial_state)
+
+    # Safety: if agent loop ended without response
+    if result.get("response") is None and not result.get("error"):
+        result["error"] = "Agent could not generate a response. Please try again."
 
     return result
