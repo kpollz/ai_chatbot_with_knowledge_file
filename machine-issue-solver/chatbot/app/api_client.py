@@ -52,3 +52,50 @@ async def list_lines() -> List[Dict]:
     lines = await _get("/lines/")
     logger.info(f"Issue API returned {len(lines)} lines")
     return lines
+
+
+# ---- Sync operations (for Streamlit CRUD pages) ----
+
+def _sync_request(method: str, path: str, params: dict = None, json_data: dict = None):
+    """Sync HTTP request helper."""
+    url = f"{ISSUE_API_URL}{path}"
+    try:
+        with httpx.Client(timeout=30) as client:
+            response = client.request(method, url, params=params, json=json_data)
+            response.raise_for_status()
+            if response.status_code == 204:
+                return None
+            return response.json()
+    except httpx.ConnectError:
+        raise ConnectionError(f"Cannot connect to Issue API at {ISSUE_API_URL}.")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Issue API error: {e.response.status_code} - {e.response.text}")
+        raise
+
+
+def get_issues_sync(skip: int = 0, limit: int = 500) -> List[Dict]:
+    return _sync_request("GET", "/issues/", params={"skip": skip, "limit": limit})
+
+
+def get_issue_sync(issue_id: int) -> Dict:
+    return _sync_request("GET", f"/issues/{issue_id}")
+
+
+def create_issue_sync(data: Dict) -> Dict:
+    return _sync_request("POST", "/issues/", json_data=data)
+
+
+def update_issue_sync(issue_id: int, data: Dict) -> Dict:
+    return _sync_request("PUT", f"/issues/{issue_id}", json_data=data)
+
+
+def delete_issue_sync(issue_id: int) -> None:
+    _sync_request("DELETE", f"/issues/{issue_id}")
+
+
+def get_lines_sync() -> List[Dict]:
+    return _sync_request("GET", "/lines/")
+
+
+def get_machines_sync() -> List[Dict]:
+    return _sync_request("GET", "/machines/")

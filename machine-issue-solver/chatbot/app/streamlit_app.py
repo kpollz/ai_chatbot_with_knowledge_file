@@ -1,11 +1,13 @@
 """
-Streamlit UI for Machine Issue Solver (ReAct Agent with tool calling)
+Streamlit UI for Machine Issue Solver — Chat Page with Feedback
 """
 
 import asyncio
+from datetime import datetime
 import streamlit as st
 from graph import solve_issue
 from history import check_context_limit
+from conversation_store import create_session_id, save_conversation
 from logger import logger
 
 
@@ -25,7 +27,7 @@ st.set_page_config(
 st.title("🔧 Machine Issue Solver")
 st.markdown("Ask about machine issues and get solutions based on your database.")
 
-# Sidebar with instructions
+# Sidebar
 with st.sidebar:
     st.header("📋 Instructions")
     st.markdown("""
@@ -59,43 +61,59 @@ with st.sidebar:
         else:
             st.caption(f"Context: ~{tokens:,} tokens ({pct:.0f}%)")
 
-# Initialize chat history
+
+# ---- Session initialization ----
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_session_id()
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat history
-for message in st.session_state.messages:
+session_id = st.session_state.session_id
+
+
+# ---- Display chat history with feedback ----
+for i, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # Feedback widget for assistant messages
+        if message["role"] == "assistant":
+            st.feedback("thumbs", key=f"fb_{session_id}_{i}")
 
-# Check context limit before accepting input
+# Sync feedback from widgets → message dicts → JSON file
+feedback_changed = False
+for i, message in enumerate(st.session_state.messages):
+    if message["role"] == "assistant":
+        fb_val = st.session_state.get(f"fb_{session_id}_{i}")
+        if fb_val is not None:
+            new_fb = "like" if fb_val == 1 else "dislike"
+            if message.get("feedback") != new_fb:
+                message["feedback"] = new_fb
+                feedback_changed = True
+if feedback_changed:
+    save_conversation(session_id, st.session_state.messages)
+
+
+# ---- Context limit check ----
 context_status, context_tokens = check_context_limit(st.session_state.messages)
-
 if context_status == "exceeded":
-    st.error(
-        "⚠️ **Session context limit reached.** "
-        "Please clear the chat and start a new session to continue."
-    )
+    st.error("⚠️ **Session context limit reached.** Please clear the chat and start a new session.")
 
-# Chat input
+
+# ---- Chat input ----
 if prompt := st.chat_input("Ask about a machine issue...", disabled=(context_status == "exceeded")):
     # Add user message
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    user_msg = {"role": "user", "content": prompt, "timestamp": datetime.now().isoformat()}
+    st.session_state.messages.append(user_msg)
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Show warning if approaching limit
     if context_status == "warning":
-        st.warning(
-            f"⚠️ Context window is ~{context_tokens:,} tokens. "
-            "Consider starting a new session soon."
-        )
+        st.warning(f"⚠️ Context ~{context_tokens:,} tokens. Consider starting a new session soon.")
 
-    # Process with ReAct agent (async)
+    # Process with ReAct agent
     with st.chat_message("assistant"):
         with st.spinner("Processing..."):
             try:
-                # Pass conversation history (exclude current message)
                 history = st.session_state.messages[:-1]
                 result = run_async(solve_issue(prompt, history=history))
 
@@ -103,30 +121,44 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=(context_sta
                     response = f"❌ **Error**\n\n{result['error']}"
                     st.markdown(response)
                 else:
-                    # Show issues if any were found during tool calls
+                    # Show issues if found
                     issues = result.get("issues", [])
                     if issues:
                         with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
-                            for i, issue in enumerate(issues, 1):
-                                st.markdown(f"**Issue {i}:** ({issue.get('Date', 'N/A')})")
+                            for j, issue in enumerate(issues, 1):
+                                st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
                                 st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
                                 st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
                                 st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
                                 st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
                                 st.divider()
 
-                    # Show agent response
                     response = result.get("response", "No response generated.")
                     st.markdown(response)
 
-                st.session_state.messages.append({"role": "assistant", "content": response})
-
             except Exception as e:
-                error_msg = f"❌ An error occurred: {str(e)}"
-                st.error(error_msg)
-                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                response = f"❌ An error occurred: {str(e)}"
+                st.error(response)
 
-# Clear chat button
+        # Append assistant message
+        assistant_msg = {
+            "role": "assistant",
+            "content": response,
+            "timestamp": datetime.now().isoformat(),
+            "feedback": None,
+        }
+        st.session_state.messages.append(assistant_msg)
+
+        # Feedback widget for new message
+        fb_idx = len(st.session_state.messages) - 1
+        st.feedback("thumbs", key=f"fb_{session_id}_{fb_idx}")
+
+        # Auto-save conversation
+        save_conversation(session_id, st.session_state.messages)
+
+
+# ---- Clear chat ----
 if st.sidebar.button("🗑️ Clear Chat (New Session)"):
     st.session_state.messages = []
+    st.session_state.session_id = create_session_id()
     st.rerun()
