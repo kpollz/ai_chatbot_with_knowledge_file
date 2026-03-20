@@ -46,6 +46,16 @@ with st.sidebar:
     """)
 
     st.divider()
+    st.header("🔑 API Key")
+    api_key = st.text_input(
+        "Enter your LLM API Key",
+        type="password",
+        key="api_key_input",
+        placeholder="Paste your API key here...",
+        help="Get your API key at https://mycompany.com/api/keys",
+    )
+
+    st.divider()
     st.header("⚙️ System Info")
     st.info("Using Company LLM (Gauss)")
     st.success("Connected to Issue API")
@@ -98,9 +108,14 @@ context_status, context_tokens = check_context_limit(st.session_state.messages)
 if context_status == "exceeded":
     st.error("⚠️ **Session context limit reached.** Please clear the chat and start a new session.")
 
+# ---- API key check ----
+chat_disabled = context_status == "exceeded" or not api_key
+if not api_key:
+    st.info("🔑 Please enter your LLM API Key in the sidebar to start chatting.")
+
 
 # ---- Chat input ----
-if prompt := st.chat_input("Ask about a machine issue...", disabled=(context_status == "exceeded")):
+if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disabled):
     # Add user message
     user_msg = {"role": "user", "content": prompt, "timestamp": datetime.now().isoformat()}
     st.session_state.messages.append(user_msg)
@@ -115,7 +130,7 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=(context_sta
         with st.spinner("Processing..."):
             try:
                 history = st.session_state.messages[:-1]
-                result = run_async(solve_issue(prompt, history=history))
+                result = run_async(solve_issue(prompt, history=history, api_key=api_key))
 
                 if result.get("error") and not result.get("response"):
                     response = f"❌ **Error**\n\n{result['error']}"

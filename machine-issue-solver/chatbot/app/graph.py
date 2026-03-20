@@ -67,6 +67,7 @@ Quy tac:
 class GraphState(TypedDict):
     query: str                              # Current user query
     history: List[Dict[str, str]]           # Conversation history
+    api_key: str                            # User-provided LLM API key
     scratchpad: str                         # Agent reasoning + tool results log
     pending_tool_call: Optional[Dict]       # Tool call to execute next
     response: Optional[str]                 # Final response (set when done)
@@ -147,7 +148,7 @@ async def agent_node(state: GraphState) -> dict:
 
     user_prompt = "\n\n".join(parts)
 
-    llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE)
+    llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=state.get("api_key"))
 
     try:
         with Timer("LLM agent call"):
@@ -308,13 +309,14 @@ def build_graph():
 app_graph = build_graph()
 
 
-async def solve_issue(query: str, history: List[Dict[str, str]] = None) -> dict:
+async def solve_issue(query: str, history: List[Dict[str, str]] = None, api_key: str = "") -> dict:
     """
     Main entry point — process a user query through the ReAct agent.
 
     Args:
         query: User's question
         history: Conversation history [{"role": "user"/"assistant", "content": "..."}]
+        api_key: User-provided LLM API key
 
     Returns:
         dict with response, issues, error
@@ -324,6 +326,7 @@ async def solve_issue(query: str, history: List[Dict[str, str]] = None) -> dict:
     initial_state = {
         "query": query,
         "history": history or [],
+        "api_key": api_key,
         "scratchpad": "",
         "pending_tool_call": None,
         "response": None,
