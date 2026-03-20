@@ -47,13 +47,22 @@ with st.sidebar:
 
     st.divider()
     st.header("🔑 API Key")
+
+    def _save_api_key():
+        st.session_state.api_key = st.session_state._api_key_widget
+
     api_key = st.text_input(
         "Enter your LLM API Key",
         type="password",
-        key="api_key_input",
+        key="_api_key_widget",
+        value=st.session_state.get("api_key", ""),
         placeholder="Paste your API key here...",
         help="Get your API key at https://mycompany.com/api/keys",
+        on_change=_save_api_key,
     )
+    # Also sync on first load (in case restored from session state)
+    if api_key:
+        st.session_state.api_key = api_key
 
     st.divider()
     st.header("⚙️ System Info")
