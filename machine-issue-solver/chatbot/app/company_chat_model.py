@@ -1,16 +1,24 @@
 """
-Custom Chat Model for Company LLM (async support via httpx, streaming via requests)
+Custom Chat Model for Company LLM
+
+Implements LangChain's standard BaseChatModel interface:
+  - _generate()  : sync non-streaming
+  - _agenerate() : async non-streaming
+  - _stream()    : sync streaming (yields ChatGenerationChunk)
+
+Once _stream() is implemented, LangChain's .stream() method works automatically,
+and Streamlit's st.write_stream(llm.stream(...)) handles display natively.
 """
 
 import json
 import time
-from typing import Any, Generator, List, Optional, Dict
+from typing import Any, Iterator, List, Optional, Dict
 
 import httpx
 import requests as req_lib
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage
-from langchain_core.outputs import ChatResult, ChatGeneration
+from langchain_core.messages import BaseMessage, AIMessage, AIMessageChunk, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatResult, ChatGeneration, ChatGenerationChunk
 from pydantic import Field
 
 from config import COMPANY_MODELS, COMPANY_LLM_API_KEY, COMPANY_LLM_MODEL_ID, COMPANY_LLM_MODEL_URL
@@ -85,10 +93,16 @@ class ChatCompanyLLM(BaseChatModel):
         except (KeyError, IndexError) as e:
             raise RuntimeError(f"Unexpected response format: {e}")
 
-    # ---- Streaming (sync, using requests) ----
+    # ---- Streaming (LangChain standard interface) ----
 
-    def stream_chat(self, messages: List[BaseMessage]) -> Generator[str, None, None]:
-        """Sync streaming generator — yields text chunks as they arrive from the API."""
+    def _stream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
+                run_manager: Optional[Any] = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        """
+        LangChain streaming interface — yields ChatGenerationChunk.
+
+        This makes llm.stream(messages) work, which yields AIMessageChunk.
+        Streamlit's st.write_stream() natively handles AIMessageChunk.
+        """
         user_prompt, system_prompt = self._parse_messages(messages)
         model_config = self._get_model_config()
         headers = {'Content-Type': 'application/json', 'x-api-key': self.api_key}
@@ -111,37 +125,20 @@ class ChatCompanyLLM(BaseChatModel):
                 try:
                     decoded_line = json.loads(line.decode("utf-8"))
                     if decoded_line.get("event") == "token":
-                        chunk = decoded_line["data"]["chunk"]
-                        if chunk:
+                        chunk_text = decoded_line["data"]["chunk"]
+                        if chunk_text:
+                            chunk = ChatGenerationChunk(
+                                message=AIMessageChunk(content=chunk_text)
+                            )
+                            if run_manager:
+                                run_manager.on_llm_new_token(chunk_text, chunk=chunk)
                             yield chunk
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning(f"Skipping malformed streaming line: {e}")
 
         logger.info(f"Streaming completed in {time.time() - start_time:.2f}s")
 
-    def invoke_sync(self, messages: List[BaseMessage]) -> str:
-        """Sync non-streaming call — returns full response text."""
-        user_prompt, system_prompt = self._parse_messages(messages)
-        model_config = self._get_model_config()
-        headers = {'Content-Type': 'application/json', 'x-api-key': self.api_key}
-        params = {'stream': 'false'}
-        json_data = self._build_request_body(user_prompt, system_prompt, stream=False)
-
-        start_time = time.time()
-        logger.info(f"Calling Company LLM (sync): {self.model}")
-
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                model_config["model-url"],
-                params=params, headers=headers, json=json_data
-            )
-            response.raise_for_status()
-
-        text = self._parse_response(response.json())
-        logger.info(f"LLM response received in {time.time() - start_time:.2f}s")
-        return text
-
-    # ---- Sync (fallback, LangChain interface) ----
+    # ---- Sync (LangChain interface) ----
 
     def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                   run_manager: Optional[Any] = None, **kwargs: Any) -> ChatResult:
@@ -167,7 +164,7 @@ class ChatCompanyLLM(BaseChatModel):
         message = AIMessage(content=text)
         return ChatResult(generations=[ChatGeneration(message=message)])
 
-    # ---- Async (primary) ----
+    # ---- Async (LangChain interface) ----
 
     async def _agenerate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                          run_manager: Optional[Any] = None, **kwargs: Any) -> ChatResult:

@@ -4,7 +4,7 @@ Streamlit UI for Machine Issue Solver — Chat Page with Streaming
 
 from datetime import datetime
 import streamlit as st
-from graph import solve_issue_stream
+from graph import solve_issue_stream, StreamResult
 from history import check_context_limit
 from conversation_store import create_session_id, save_conversation
 from logger import logger
@@ -128,54 +128,41 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
     if context_status == "warning":
         st.warning(f"⚠️ Context ~{context_tokens:,} tokens. Consider starting a new session soon.")
 
-    # Process with ReAct agent (streaming)
+    # Process with ReAct agent (streaming via LangChain standard)
     with st.chat_message("assistant"):
-        status_placeholder = st.empty()
-        response_placeholder = st.empty()
-
-        full_response = ""
-        issues = []
-        has_error = False
-
         try:
             history = st.session_state.messages[:-1]
+            stream_result = StreamResult()
 
-            for event_type, data in solve_issue_stream(prompt, history=history, api_key=api_key):
-                if event_type == "token":
-                    full_response += data
-                    response_placeholder.markdown(full_response + "▌")
-                elif event_type == "status":
-                    status_placeholder.info(f"🔍 {data}")
-                elif event_type == "done":
-                    issues = data
-                elif event_type == "error":
-                    has_error = True
-                    full_response = f"❌ **Error**\n\n{data}"
+            # st.write_stream natively handles AIMessageChunk from llm.stream()
+            response = st.write_stream(
+                solve_issue_stream(prompt, history=history, api_key=api_key,
+                                   result=stream_result)
+            )
+
+            # Check for errors from the stream
+            if stream_result.error:
+                st.error(f"❌ {stream_result.error}")
+                response = response or f"Error: {stream_result.error}"
+
+            # Show issues if found (after streaming completes)
+            if stream_result.issues:
+                with st.expander(f"📚 Found {len(stream_result.issues)} related issues",
+                                 expanded=False):
+                    for j, issue in enumerate(stream_result.issues, 1):
+                        st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
+                        st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
+                        st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
+                        st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                        st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
+                        st.divider()
 
         except Exception as e:
-            has_error = True
-            full_response = f"❌ An error occurred: {str(e)}"
+            response = f"❌ An error occurred: {str(e)}"
+            st.error(response)
             logger.error(f"Streaming error: {e}")
 
-        # Clear status and cursor
-        status_placeholder.empty()
-        if has_error:
-            response_placeholder.error(full_response)
-        else:
-            response_placeholder.markdown(full_response or "No response generated.")
-
-        # Show issues if found
-        if issues:
-            with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
-                for j, issue in enumerate(issues, 1):
-                    st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
-                    st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
-                    st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
-                    st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
-                    st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
-                    st.divider()
-
-        response = full_response or "No response generated."
+        response = response or "No response generated."
 
         # Append assistant message
         assistant_msg = {

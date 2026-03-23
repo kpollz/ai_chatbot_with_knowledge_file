@@ -345,12 +345,18 @@ async def solve_issue(query: str, history: List[Dict[str, str]] = None, api_key:
     return result
 
 
-# ---- Streaming entry point (sync generator) ----
+# ---- Streaming entry point (sync generator, LangChain standard) ----
+
+class StreamResult:
+    """Side-channel to pass metadata (issues, errors) out of the stream generator."""
+    def __init__(self):
+        self.issues: List[Dict] = []
+        self.error: Optional[str] = None
+
 
 def _build_agent_messages(query: str, history: List[Dict[str, str]],
                           scratchpad: str) -> list:
     """Build LLM messages for agent call (shared logic with agent_node)."""
-    from langchain_core.messages import SystemMessage, HumanMessage
     parts = []
     history_text = format_history_for_prompt(history)
     if history_text:
@@ -366,7 +372,7 @@ def _build_agent_messages(query: str, history: List[Dict[str, str]],
     return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_prompt)]
 
 
-def _execute_tool_sync(tool_call: Dict, issues_list: list) -> tuple:
+def _execute_tool_sync(tool_call: Dict) -> tuple:
     """Execute a tool call synchronously. Returns (result_text, issues_found)."""
     tool_name = tool_call.get("tool", "")
     tool_args = tool_call.get("args", {})
@@ -418,20 +424,21 @@ def _execute_tool_sync(tool_call: Dict, issues_list: list) -> tuple:
 
 
 def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
-                       api_key: str = ""):
+                       api_key: str = "", result: Optional[StreamResult] = None):
     """
-    Streaming entry point — sync generator yielding (event_type, data) tuples.
+    Streaming entry point — sync generator yielding AIMessageChunk objects.
 
-    Event types:
-        ("status", message)  — status update (e.g., tool search in progress)
-        ("token", text)      — streaming text chunk
-        ("done", issues)     — final signal with issues list
+    Compatible with st.write_stream() which natively handles AIMessageChunk.
+    Uses llm.stream() (LangChain standard) internally.
 
     Strategy:
-        - 1st LLM call: stream to buffer, check for tool call
-          - If tool call → execute tools, then stream 2nd call directly to user
-          - If no tool call → replay buffer (direct answer, usually short)
-        - After tools: stream directly to user (real streaming for long responses)
+        - 1st LLM call: buffer chunks to detect tool call
+          - Tool call → execute tool, then stream 2nd call directly (real streaming)
+          - No tool call → replay buffered chunks
+        - After tools: yield chunks as they arrive (real streaming)
+
+    Args:
+        result: Optional StreamResult to receive issues/errors as side-channel.
     """
     logger.info(f"Processing query (streaming): {query}")
     history = history or []
@@ -446,71 +453,73 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
 
             if not scratchpad:
                 # First call — buffer to detect tool calls
-                chunks = []
-                for chunk in llm.stream_chat(messages):
-                    chunks.append(chunk)
+                buffered_chunks = []
+                buffered_texts = []
 
-                full_text = "".join(chunks)
+                for ai_chunk in llm.stream(messages):
+                    text = ai_chunk.content
+                    if text:
+                        buffered_chunks.append(ai_chunk)
+                        buffered_texts.append(text)
+
+                full_text = "".join(buffered_texts)
                 tool_call = parse_tool_call(full_text)
 
                 if tool_call:
                     tool_name = tool_call.get("tool", "")
                     tool_args = tool_call.get("args", {})
-                    logger.info(f"Agent wants tool (stream): {tool_name}({tool_args})")
-
-                    yield ("status", f"Dang tim kiem thong tin...")
+                    logger.info(f"Agent wants tool: {tool_name}({tool_args})")
 
                     scratchpad += (
                         f"\n--- Agent goi tool ---\n"
                         f"Tool: {tool_name}\n"
                         f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
                     )
-                    result_text, issues_found = _execute_tool_sync(tool_call, issues)
+                    result_text, issues_found = _execute_tool_sync(tool_call)
                     if issues_found:
                         issues = issues_found
                     scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
                     continue
                 else:
                     # Direct answer — replay buffered chunks
-                    cleaned = clean_response(full_text)
-                    for chunk in chunks:
-                        cleaned_chunk = clean_response(chunk)
-                        if cleaned_chunk:
-                            yield ("token", cleaned_chunk)
-                    yield ("done", issues)
+                    for ai_chunk in buffered_chunks:
+                        yield ai_chunk
+                    if result is not None:
+                        result.issues = issues
                     return
             else:
-                # After tools — stream directly to user (real streaming!)
+                # After tools — REAL streaming, yield as chunks arrive
                 full_text = ""
-                for chunk in llm.stream_chat(messages):
-                    full_text += chunk
-                    yield ("token", chunk)
+                for ai_chunk in llm.stream(messages):
+                    text = ai_chunk.content
+                    if text:
+                        full_text += text
+                        yield ai_chunk
 
                 # Edge case: unexpected additional tool call
                 tool_call = parse_tool_call(full_text)
                 if tool_call and iteration < MAX_ITERATIONS:
-                    tool_name = tool_call.get("tool", "")
-                    tool_args = tool_call.get("args", {})
-                    logger.warning(f"Unexpected tool call during streaming: {tool_name}")
-                    yield ("status", f"\nDang tim kiem them...")
-
+                    logger.warning(f"Unexpected tool call during streaming")
                     scratchpad += (
                         f"\n--- Agent goi tool ---\n"
-                        f"Tool: {tool_name}\n"
-                        f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+                        f"Tool: {tool_call.get('tool', '')}\n"
+                        f"Args: {json.dumps(tool_call.get('args', {}), ensure_ascii=False)}\n"
                     )
-                    result_text, issues_found = _execute_tool_sync(tool_call, issues)
+                    result_text, issues_found = _execute_tool_sync(tool_call)
                     if issues_found:
                         issues = issues_found
                     scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
                     continue
 
-                yield ("done", issues)
+                if result is not None:
+                    result.issues = issues
                 return
 
         # Exhausted iterations
-        yield ("done", issues)
+        if result is not None:
+            result.issues = issues
 
     except Exception as e:
         logger.error(f"Streaming error: {e}")
-        yield ("error", str(e))
+        if result is not None:
+            result.error = str(e)
