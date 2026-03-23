@@ -134,11 +134,12 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
             history = st.session_state.messages[:-1]
             stream_result = StreamResult()
 
-            # st.write_stream natively handles AIMessageChunk from llm.stream()
-            response = st.write_stream(
-                solve_issue_stream(prompt, history=history, api_key=api_key,
-                                   result=stream_result)
-            )
+            # st.spinner shows indicator while waiting for first token / tool execution
+            with st.spinner("Thinking..."):
+                response = st.write_stream(
+                    solve_issue_stream(prompt, history=history, api_key=api_key,
+                                       result=stream_result)
+                )
 
             # Check for errors from the stream
             if stream_result.error:
