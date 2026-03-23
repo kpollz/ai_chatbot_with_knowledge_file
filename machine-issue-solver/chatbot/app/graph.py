@@ -423,6 +423,10 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
     return result_text, issues_found
 
 
+TOOL_CALL_TAG = "<tool_call>"
+PREFIX_BUFFER_SIZE = 20  # chars — enough to detect "<tool_call>" (11 chars)
+
+
 def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                        api_key: str = "", result: Optional[StreamResult] = None):
     """
@@ -432,10 +436,10 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     Uses llm.stream() (LangChain standard) internally.
 
     Strategy:
-        - 1st LLM call: buffer chunks to detect tool call
-          - Tool call → execute tool, then stream 2nd call directly (real streaming)
-          - No tool call → replay buffered chunks
-        - After tools: yield chunks as they arrive (real streaming)
+        - 1st LLM call: buffer only a small prefix (~20 chars) to detect <tool_call>
+          - Prefix has <tool_call> → buffer rest, execute tool, stream 2nd call
+          - Prefix clean → flush buffer, yield remaining chunks in real-time
+        - After tools: yield chunks directly (real streaming)
 
     Args:
         result: Optional StreamResult to receive issues/errors as side-channel.
@@ -452,38 +456,62 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
             messages = _build_agent_messages(query, history, scratchpad)
 
             if not scratchpad:
-                # First call — buffer to detect tool calls
-                buffered_chunks = []
-                buffered_texts = []
+                # First call — prefix-buffer to detect tool calls
+                prefix = ""
+                prefix_done = False
+                is_tool = False
+                tool_buffer = []  # only used when tool call detected
 
                 for ai_chunk in llm.stream(messages):
                     text = ai_chunk.content
-                    if text:
-                        buffered_chunks.append(ai_chunk)
-                        buffered_texts.append(text)
+                    if not text:
+                        continue
 
-                full_text = "".join(buffered_texts)
-                tool_call = parse_tool_call(full_text)
+                    if not prefix_done:
+                        prefix += text
+                        tool_buffer.append(ai_chunk)
 
-                if tool_call:
-                    tool_name = tool_call.get("tool", "")
-                    tool_args = tool_call.get("args", {})
-                    logger.info(f"Agent wants tool: {tool_name}({tool_args})")
-
-                    scratchpad += (
-                        f"\n--- Agent goi tool ---\n"
-                        f"Tool: {tool_name}\n"
-                        f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
-                    )
-                    result_text, issues_found = _execute_tool_sync(tool_call)
-                    if issues_found:
-                        issues = issues_found
-                    scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
-                    continue
-                else:
-                    # Direct answer — replay buffered chunks
-                    for ai_chunk in buffered_chunks:
+                        if TOOL_CALL_TAG in prefix:
+                            # Tool call detected — buffer everything
+                            is_tool = True
+                            prefix_done = True
+                        elif len(prefix) >= PREFIX_BUFFER_SIZE:
+                            # No tool call — flush prefix buffer, start streaming
+                            prefix_done = True
+                            for buffered in tool_buffer:
+                                yield buffered
+                            tool_buffer = None
+                    elif is_tool:
+                        tool_buffer.append(ai_chunk)
+                    else:
+                        # Real-time streaming to user
                         yield ai_chunk
+
+                # Handle end-of-stream
+                if is_tool:
+                    full_text = "".join(c.content for c in tool_buffer if c.content)
+                    tool_call = parse_tool_call(full_text)
+                    if tool_call:
+                        tool_name = tool_call.get("tool", "")
+                        tool_args = tool_call.get("args", {})
+                        logger.info(f"Agent wants tool: {tool_name}({tool_args})")
+
+                        scratchpad += (
+                            f"\n--- Agent goi tool ---\n"
+                            f"Tool: {tool_name}\n"
+                            f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+                        )
+                        result_text, issues_found = _execute_tool_sync(tool_call)
+                        if issues_found:
+                            issues = issues_found
+                        scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                        continue
+                elif tool_buffer:
+                    # Very short response (< PREFIX_BUFFER_SIZE), not yet flushed
+                    for buffered in tool_buffer:
+                        yield buffered
+
+                if not is_tool:
                     if result is not None:
                         result.issues = issues
                     return
