@@ -383,8 +383,8 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
         if tool_name == "search_issues":
             machine_name = tool_args.get("machine_name", "")
             line_name = tool_args.get("line_name", "")
-            logger.info(f"Tool (sync): search_issues({machine_name}, {line_name})")
-            issues = search_issues_sync(machine_name, line_name)
+            with Timer(f"Tool: search_issues({machine_name}, {line_name})"):
+                issues = search_issues_sync(machine_name, line_name)
             issues_found = issues
             if not issues:
                 result_text = (f"Khong tim thay van de nao cho may '{machine_name}' "
@@ -393,8 +393,8 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
                 result_text = format_issues_for_scratchpad(issues)
 
         elif tool_name == "list_machines":
-            logger.info("Tool (sync): list_machines")
-            machines = list_machines_sync()
+            with Timer("Tool: list_machines"):
+                machines = list_machines_sync()
             if not machines:
                 result_text = "Khong co may nao trong co so du lieu."
             else:
@@ -404,8 +404,8 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
                 result_text = "\n".join(items)
 
         elif tool_name == "list_lines":
-            logger.info("Tool (sync): list_lines")
-            lines_data = list_lines_sync()
+            with Timer("Tool: list_lines"):
+                lines_data = list_lines_sync()
             if not lines_data:
                 result_text = "Khong co line nao trong co so du lieu."
             else:
