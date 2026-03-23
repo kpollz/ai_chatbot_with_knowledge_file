@@ -151,7 +151,7 @@ class ChatCompanyLLM(BaseChatModel):
         start_time = time.time()
         logger.info(f"Calling Company LLM (sync): {self.model}")
 
-        with httpx.Client(timeout=self.timeout) as client:
+        with httpx.Client(timeout=self.timeout, verify=False) as client:
             response = client.post(
                 model_config["model-url"],
                 params=params, headers=headers, json=json_data
@@ -177,7 +177,7 @@ class ChatCompanyLLM(BaseChatModel):
         start_time = time.time()
         logger.info(f"Calling Company LLM (async): {self.model}")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
             response = await client.post(
                 model_config["model-url"],
                 params=params, headers=headers, json=json_data
