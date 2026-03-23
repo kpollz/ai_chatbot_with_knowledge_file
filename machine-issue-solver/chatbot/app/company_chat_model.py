@@ -87,10 +87,21 @@ class ChatCompanyLLM(BaseChatModel):
 
     @staticmethod
     def _parse_response(response_data: dict) -> str:
-        """Extract text from API response."""
+        """Extract text from API response.
+
+        Handles both formats:
+          results.message.text.text  (text is a dict with nested 'text' key)
+          results.message.text       (text is directly a string)
+        """
         try:
-            return response_data['outputs'][0]['outputs'][0]['results']['message']['text']['text']
-        except (KeyError, IndexError) as e:
+            result = response_data['outputs'][0]['outputs'][0]['results']
+            message = result['message']
+            text_field = message['text']
+            if isinstance(text_field, dict):
+                return text_field['text']
+            return text_field
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error(f"Response structure: {json.dumps(response_data, default=str)[:500]}")
             raise RuntimeError(f"Unexpected response format: {e}")
 
     # ---- Streaming (LangChain standard interface) ----
