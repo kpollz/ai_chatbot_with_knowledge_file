@@ -5,8 +5,9 @@ langgraph
 langchain-core
 langchain-community
 
-# Async HTTP client (replaces requests)
+# HTTP clients
 httpx
+requests
 
 # Utilities
 python-dotenv

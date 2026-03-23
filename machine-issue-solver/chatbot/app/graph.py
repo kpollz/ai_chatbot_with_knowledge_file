@@ -23,7 +23,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
-from api_client import search_issues, list_machines, list_lines
+from api_client import (search_issues, list_machines, list_lines,
+                        search_issues_sync, list_machines_sync, list_lines_sync)
 from history import format_history_for_prompt
 from logger import logger, Timer
 
@@ -311,7 +312,7 @@ app_graph = build_graph()
 
 async def solve_issue(query: str, history: List[Dict[str, str]] = None, api_key: str = "") -> dict:
     """
-    Main entry point — process a user query through the ReAct agent.
+    Main entry point — process a user query through the ReAct agent (non-streaming).
 
     Args:
         query: User's question
@@ -342,3 +343,174 @@ async def solve_issue(query: str, history: List[Dict[str, str]] = None, api_key:
         result["error"] = "Agent could not generate a response. Please try again."
 
     return result
+
+
+# ---- Streaming entry point (sync generator) ----
+
+def _build_agent_messages(query: str, history: List[Dict[str, str]],
+                          scratchpad: str) -> list:
+    """Build LLM messages for agent call (shared logic with agent_node)."""
+    from langchain_core.messages import SystemMessage, HumanMessage
+    parts = []
+    history_text = format_history_for_prompt(history)
+    if history_text:
+        parts.append(history_text)
+    parts.append(f"Cau hoi hien tai cua nguoi dung: {query}")
+    if scratchpad:
+        parts.append(
+            f"\n{scratchpad}\n"
+            "Dua tren ket qua tool o tren, hay tra loi nguoi dung chi tiet va huu ich. "
+            "KHONG goi them tool neu khong can thiet."
+        )
+    user_prompt = "\n\n".join(parts)
+    return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_prompt)]
+
+
+def _execute_tool_sync(tool_call: Dict, issues_list: list) -> tuple:
+    """Execute a tool call synchronously. Returns (result_text, issues_found)."""
+    tool_name = tool_call.get("tool", "")
+    tool_args = tool_call.get("args", {})
+    result_text = ""
+    issues_found = []
+
+    try:
+        if tool_name == "search_issues":
+            machine_name = tool_args.get("machine_name", "")
+            line_name = tool_args.get("line_name", "")
+            logger.info(f"Tool (sync): search_issues({machine_name}, {line_name})")
+            issues = search_issues_sync(machine_name, line_name)
+            issues_found = issues
+            if not issues:
+                result_text = (f"Khong tim thay van de nao cho may '{machine_name}' "
+                               f"tren line '{line_name}'.")
+            else:
+                result_text = format_issues_for_scratchpad(issues)
+
+        elif tool_name == "list_machines":
+            logger.info("Tool (sync): list_machines")
+            machines = list_machines_sync()
+            if not machines:
+                result_text = "Khong co may nao trong co so du lieu."
+            else:
+                items = [f"Co {len(machines)} may:\n"]
+                for m in machines:
+                    items.append(f"- {m.get('MachineName', 'N/A')} (ID: {m.get('MachineID', 'N/A')})")
+                result_text = "\n".join(items)
+
+        elif tool_name == "list_lines":
+            logger.info("Tool (sync): list_lines")
+            lines_data = list_lines_sync()
+            if not lines_data:
+                result_text = "Khong co line nao trong co so du lieu."
+            else:
+                items = [f"Co {len(lines_data)} line:\n"]
+                for ln in lines_data:
+                    items.append(f"- {ln.get('LineName', 'N/A')} (ID: {ln.get('LineID', 'N/A')})")
+                result_text = "\n".join(items)
+        else:
+            result_text = f"Tool '{tool_name}' khong ton tai."
+
+    except Exception as e:
+        logger.error(f"Tool execution error: {e}")
+        result_text = f"Loi khi goi tool '{tool_name}': {e}"
+
+    return result_text, issues_found
+
+
+def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
+                       api_key: str = ""):
+    """
+    Streaming entry point — sync generator yielding (event_type, data) tuples.
+
+    Event types:
+        ("status", message)  — status update (e.g., tool search in progress)
+        ("token", text)      — streaming text chunk
+        ("done", issues)     — final signal with issues list
+
+    Strategy:
+        - 1st LLM call: stream to buffer, check for tool call
+          - If tool call → execute tools, then stream 2nd call directly to user
+          - If no tool call → replay buffer (direct answer, usually short)
+        - After tools: stream directly to user (real streaming for long responses)
+    """
+    logger.info(f"Processing query (streaming): {query}")
+    history = history or []
+    scratchpad = ""
+    issues = []
+
+    llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
+
+    try:
+        for iteration in range(MAX_ITERATIONS + 1):
+            messages = _build_agent_messages(query, history, scratchpad)
+
+            if not scratchpad:
+                # First call — buffer to detect tool calls
+                chunks = []
+                for chunk in llm.stream_chat(messages):
+                    chunks.append(chunk)
+
+                full_text = "".join(chunks)
+                tool_call = parse_tool_call(full_text)
+
+                if tool_call:
+                    tool_name = tool_call.get("tool", "")
+                    tool_args = tool_call.get("args", {})
+                    logger.info(f"Agent wants tool (stream): {tool_name}({tool_args})")
+
+                    yield ("status", f"Dang tim kiem thong tin...")
+
+                    scratchpad += (
+                        f"\n--- Agent goi tool ---\n"
+                        f"Tool: {tool_name}\n"
+                        f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+                    )
+                    result_text, issues_found = _execute_tool_sync(tool_call, issues)
+                    if issues_found:
+                        issues = issues_found
+                    scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                    continue
+                else:
+                    # Direct answer — replay buffered chunks
+                    cleaned = clean_response(full_text)
+                    for chunk in chunks:
+                        cleaned_chunk = clean_response(chunk)
+                        if cleaned_chunk:
+                            yield ("token", cleaned_chunk)
+                    yield ("done", issues)
+                    return
+            else:
+                # After tools — stream directly to user (real streaming!)
+                full_text = ""
+                for chunk in llm.stream_chat(messages):
+                    full_text += chunk
+                    yield ("token", chunk)
+
+                # Edge case: unexpected additional tool call
+                tool_call = parse_tool_call(full_text)
+                if tool_call and iteration < MAX_ITERATIONS:
+                    tool_name = tool_call.get("tool", "")
+                    tool_args = tool_call.get("args", {})
+                    logger.warning(f"Unexpected tool call during streaming: {tool_name}")
+                    yield ("status", f"\nDang tim kiem them...")
+
+                    scratchpad += (
+                        f"\n--- Agent goi tool ---\n"
+                        f"Tool: {tool_name}\n"
+                        f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+                    )
+                    result_text, issues_found = _execute_tool_sync(tool_call, issues)
+                    if issues_found:
+                        issues = issues_found
+                    scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                    continue
+
+                yield ("done", issues)
+                return
+
+        # Exhausted iterations
+        yield ("done", issues)
+
+    except Exception as e:
+        logger.error(f"Streaming error: {e}")
+        yield ("error", str(e))

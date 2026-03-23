@@ -1,19 +1,13 @@
 """
-Streamlit UI for Machine Issue Solver — Chat Page with Feedback
+Streamlit UI for Machine Issue Solver — Chat Page with Streaming
 """
 
-import asyncio
 from datetime import datetime
 import streamlit as st
-from graph import solve_issue
+from graph import solve_issue_stream
 from history import check_context_limit
 from conversation_store import create_session_id, save_conversation
 from logger import logger
-
-
-def run_async(coro):
-    """Bridge async coroutine into Streamlit's sync context."""
-    return asyncio.run(coro)
 
 
 # Page config
@@ -134,35 +128,54 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
     if context_status == "warning":
         st.warning(f"⚠️ Context ~{context_tokens:,} tokens. Consider starting a new session soon.")
 
-    # Process with ReAct agent
+    # Process with ReAct agent (streaming)
     with st.chat_message("assistant"):
-        with st.spinner("Processing..."):
-            try:
-                history = st.session_state.messages[:-1]
-                result = run_async(solve_issue(prompt, history=history, api_key=api_key))
+        status_placeholder = st.empty()
+        response_placeholder = st.empty()
 
-                if result.get("error") and not result.get("response"):
-                    response = f"❌ **Error**\n\n{result['error']}"
-                    st.markdown(response)
-                else:
-                    # Show issues if found
-                    issues = result.get("issues", [])
-                    if issues:
-                        with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
-                            for j, issue in enumerate(issues, 1):
-                                st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
-                                st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
-                                st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
-                                st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
-                                st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
-                                st.divider()
+        full_response = ""
+        issues = []
+        has_error = False
 
-                    response = result.get("response", "No response generated.")
-                    st.markdown(response)
+        try:
+            history = st.session_state.messages[:-1]
 
-            except Exception as e:
-                response = f"❌ An error occurred: {str(e)}"
-                st.error(response)
+            for event_type, data in solve_issue_stream(prompt, history=history, api_key=api_key):
+                if event_type == "token":
+                    full_response += data
+                    response_placeholder.markdown(full_response + "▌")
+                elif event_type == "status":
+                    status_placeholder.info(f"🔍 {data}")
+                elif event_type == "done":
+                    issues = data
+                elif event_type == "error":
+                    has_error = True
+                    full_response = f"❌ **Error**\n\n{data}"
+
+        except Exception as e:
+            has_error = True
+            full_response = f"❌ An error occurred: {str(e)}"
+            logger.error(f"Streaming error: {e}")
+
+        # Clear status and cursor
+        status_placeholder.empty()
+        if has_error:
+            response_placeholder.error(full_response)
+        else:
+            response_placeholder.markdown(full_response or "No response generated.")
+
+        # Show issues if found
+        if issues:
+            with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
+                for j, issue in enumerate(issues, 1):
+                    st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
+                    st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
+                    st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
+                    st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                    st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
+                    st.divider()
+
+        response = full_response or "No response generated."
 
         # Append assistant message
         assistant_msg = {

@@ -99,3 +99,27 @@ def get_lines_sync() -> List[Dict]:
 
 def get_machines_sync() -> List[Dict]:
     return _sync_request("GET", "/machines/")
+
+
+# ---- Sync tool functions (for streaming graph) ----
+
+def search_issues_sync(machine_name: str, line_name: str) -> List[Dict]:
+    """Sync version of search_issues for streaming flow."""
+    issues = _sync_request("GET", "/issues/search",
+                           params={"machine_name": machine_name, "line_name": line_name})
+    logger.info(f"Issue API returned {len(issues)} issues for '{machine_name}' on '{line_name}'")
+    return issues
+
+
+def list_machines_sync() -> List[Dict]:
+    """Sync version of list_machines for streaming flow."""
+    machines = _sync_request("GET", "/machines/")
+    logger.info(f"Issue API returned {len(machines)} machines")
+    return machines
+
+
+def list_lines_sync() -> List[Dict]:
+    """Sync version of list_lines for streaming flow."""
+    lines = _sync_request("GET", "/lines/")
+    logger.info(f"Issue API returned {len(lines)} lines")
+    return lines
