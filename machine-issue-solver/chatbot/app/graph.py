@@ -449,18 +449,24 @@ TOOL_CALL_PREFIXES = ("<tool_call>", '{"tool"')
 PREFIX_BUFFER_SIZE = 20  # chars — enough to detect "<tool_call>" (11) or '{"tool"' (7)
 
 
-def solve_issue_prepare(query: str, history: List[Dict[str, str]] = None,
-                        api_key: str = "") -> dict:
+def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
+                       api_key: str = "", result: Optional[StreamResult] = None):
     """
-    Phase 1: Run tool loop (non-streaming). Returns state for Phase 2.
+    Streaming entry point — sync generator yielding AIMessageChunk objects.
 
-    Returns dict with:
-        scratchpad: str — accumulated tool results
-        issues: list — issues found during tool calls
-        direct_response: str|None — if no tools needed, the response text
-        error: str|None — error message if any
+    Compatible with st.write_stream() which natively handles AIMessageChunk.
+    Uses llm.stream() (LangChain standard) internally.
+
+    Strategy:
+        - 1st LLM call: buffer only a small prefix (~20 chars) to detect <tool_call>
+          - Prefix has <tool_call> → buffer rest, execute tool, stream 2nd call
+          - Prefix clean → flush buffer, yield remaining chunks in real-time
+        - After tools: yield chunks directly (real streaming)
+
+    Args:
+        result: Optional StreamResult to receive issues/errors as side-channel.
     """
-    logger.info(f"Processing query (prepare): {query}")
+    logger.info(f"Processing query (streaming): {query}")
     history = history or []
     scratchpad = ""
     issues = []
@@ -468,66 +474,102 @@ def solve_issue_prepare(query: str, history: List[Dict[str, str]] = None,
     llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
 
     try:
-        for iteration in range(MAX_ITERATIONS):
+        for iteration in range(MAX_ITERATIONS + 1):
             messages = _build_agent_messages(query, history, scratchpad)
 
-            # Use streaming to collect response (matching API streaming requirement)
-            collected_texts = []
-            for ai_chunk in llm.stream(messages):
-                text = ai_chunk.content
-                if text:
-                    collected_texts.append(text)
+            if not scratchpad:
+                # First call — prefix-buffer to detect tool calls
+                prefix = ""
+                prefix_done = False
+                is_tool = False
+                tool_buffer = []  # only used when tool call detected
 
-            full_text = "".join(collected_texts)
-            tool_call = parse_tool_call(full_text)
+                for ai_chunk in llm.stream(messages):
+                    text = ai_chunk.content
+                    if not text:
+                        continue
 
-            if not tool_call:
-                if scratchpad:
-                    # Had tools before, this response is after tools — don't use it,
-                    # Phase 2 will re-generate with streaming
-                    return {"scratchpad": scratchpad, "issues": issues,
-                            "direct_response": None, "error": None}
-                else:
-                    # No tools needed — return response directly
-                    return {"scratchpad": "", "issues": [],
-                            "direct_response": clean_response(full_text), "error": None}
+                    if not prefix_done:
+                        prefix += text
+                        tool_buffer.append(ai_chunk)
 
-            # Execute tool
-            tool_name = tool_call.get("tool", "")
-            tool_args = tool_call.get("args", {})
-            logger.info(f"Agent wants tool: {tool_name}({tool_args})")
+                        if any(tag in prefix for tag in TOOL_CALL_PREFIXES):
+                            # Tool call detected — buffer everything
+                            is_tool = True
+                            prefix_done = True
+                        elif len(prefix) >= PREFIX_BUFFER_SIZE:
+                            # No tool call — flush prefix buffer, start streaming
+                            prefix_done = True
+                            for buffered in tool_buffer:
+                                yield buffered
+                            tool_buffer = None
+                    elif is_tool:
+                        tool_buffer.append(ai_chunk)
+                    else:
+                        # Real-time streaming to user
+                        yield ai_chunk
 
-            scratchpad += (
-                f"\n--- Agent goi tool ---\n"
-                f"Tool: {tool_name}\n"
-                f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
-            )
-            result_text, issues_found = _execute_tool_sync(tool_call)
-            if issues_found:
-                issues = issues_found
-            scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                # Handle end-of-stream
+                if is_tool:
+                    full_text = "".join(c.content for c in tool_buffer if c.content)
+                    tool_call = parse_tool_call(full_text)
+                    if tool_call:
+                        tool_name = tool_call.get("tool", "")
+                        tool_args = tool_call.get("args", {})
+                        logger.info(f"Agent wants tool: {tool_name}({tool_args})")
 
-        # Exhausted iterations — let Phase 2 generate response
-        return {"scratchpad": scratchpad, "issues": issues,
-                "direct_response": None, "error": None}
+                        scratchpad += (
+                            f"\n--- Agent goi tool ---\n"
+                            f"Tool: {tool_name}\n"
+                            f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+                        )
+                        result_text, issues_found = _execute_tool_sync(tool_call)
+                        if issues_found:
+                            issues = issues_found
+                        scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                        continue
+                elif tool_buffer:
+                    # Very short response (< PREFIX_BUFFER_SIZE), not yet flushed
+                    for buffered in tool_buffer:
+                        yield buffered
+
+                if not is_tool:
+                    if result is not None:
+                        result.issues = issues
+                    return
+            else:
+                # After tools — REAL streaming, yield as chunks arrive
+                full_text = ""
+                for ai_chunk in llm.stream(messages):
+                    text = ai_chunk.content
+                    if text:
+                        full_text += text
+                        yield ai_chunk
+
+                # Edge case: unexpected additional tool call
+                tool_call = parse_tool_call(full_text)
+                if tool_call and iteration < MAX_ITERATIONS:
+                    logger.warning(f"Unexpected tool call during streaming")
+                    scratchpad += (
+                        f"\n--- Agent goi tool ---\n"
+                        f"Tool: {tool_call.get('tool', '')}\n"
+                        f"Args: {json.dumps(tool_call.get('args', {}), ensure_ascii=False)}\n"
+                    )
+                    result_text, issues_found = _execute_tool_sync(tool_call)
+                    if issues_found:
+                        issues = issues_found
+                    scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                    continue
+
+                if result is not None:
+                    result.issues = issues
+                return
+
+        # Exhausted iterations
+        if result is not None:
+            result.issues = issues
 
     except Exception as e:
-        logger.error(f"Prepare error: {e}")
-        return {"scratchpad": scratchpad, "issues": issues,
-                "direct_response": None, "error": str(e)}
-
-
-def solve_issue_stream_response(query: str, history: List[Dict[str, str]] = None,
-                                api_key: str = "", scratchpad: str = ""):
-    """
-    Phase 2: Stream the final response. Yields AIMessageChunk for st.write_stream().
-
-    Called after solve_issue_prepare() when tools were used (scratchpad is populated).
-    """
-    logger.info("Streaming final response")
-    llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
-    messages = _build_agent_messages(query, history or [], scratchpad)
-
-    for ai_chunk in llm.stream(messages):
-        if ai_chunk.content:
-            yield ai_chunk
+        logger.error(f"Streaming error: {e}")
+        if result is not None:
+            result.error = str(e)

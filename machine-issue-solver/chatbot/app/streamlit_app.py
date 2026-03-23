@@ -4,7 +4,7 @@ Streamlit UI for Machine Issue Solver — Chat Page with Streaming
 
 from datetime import datetime
 import streamlit as st
-from graph import solve_issue_prepare, solve_issue_stream_response
+from graph import solve_issue_stream, StreamResult
 from history import check_context_limit
 from conversation_store import create_session_id, save_conversation
 from logger import logger
@@ -128,44 +128,35 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
     if context_status == "warning":
         st.warning(f"⚠️ Context ~{context_tokens:,} tokens. Consider starting a new session soon.")
 
-    # Process with ReAct agent (2-phase: tool loop → streaming response)
+    # Process with ReAct agent (streaming via LangChain standard)
     with st.chat_message("assistant"):
         try:
             history = st.session_state.messages[:-1]
+            stream_result = StreamResult()
 
-            # Phase 1: Tool loop (with spinner)
+            # st.spinner shows indicator while waiting for first token / tool execution
             with st.spinner("Thinking..."):
-                state = solve_issue_prepare(prompt, history=history, api_key=api_key)
+                response = st.write_stream(
+                    solve_issue_stream(prompt, history=history, api_key=api_key,
+                                       result=stream_result)
+                )
 
-            if state.get("error"):
-                response = f"❌ **Error**\n\n{state['error']}"
-                st.error(response)
-            else:
-                # Show issues BEFORE response (found during tool execution)
-                issues = state.get("issues", [])
-                if issues:
-                    with st.expander(f"📚 Found {len(issues)} related issues",
-                                     expanded=False):
-                        for j, issue in enumerate(issues, 1):
-                            st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
-                            st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
-                            st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
-                            st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
-                            st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
-                            st.divider()
+            # Check for errors from the stream
+            if stream_result.error:
+                st.error(f"❌ {stream_result.error}")
+                response = response or f"Error: {stream_result.error}"
 
-                # Phase 2: Display response
-                if state.get("direct_response"):
-                    # No tools needed — display directly
-                    response = state["direct_response"]
-                    st.markdown(response)
-                else:
-                    # Tools were used — stream the final response
-                    response = st.write_stream(
-                        solve_issue_stream_response(
-                            prompt, history=history, api_key=api_key,
-                            scratchpad=state["scratchpad"])
-                    )
+            # Show issues if found (after streaming completes)
+            if stream_result.issues:
+                with st.expander(f"📚 Found {len(stream_result.issues)} related issues",
+                                 expanded=False):
+                    for j, issue in enumerate(stream_result.issues, 1):
+                        st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
+                        st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
+                        st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
+                        st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                        st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
+                        st.divider()
 
         except Exception as e:
             response = f"❌ An error occurred: {str(e)}"
