@@ -89,7 +89,7 @@ class ChatCompanyLLM(BaseChatModel):
     def _parse_response(response_data: dict) -> str:
         """Extract text from API response."""
         try:
-            return response_data['outputs'][0]['outputs'][0]['results']['text']['text']
+            return response_data['outputs'][0]['outputs'][0]['results']['message']['text']['text']
         except (KeyError, IndexError) as e:
             raise RuntimeError(f"Unexpected response format: {e}")
 
