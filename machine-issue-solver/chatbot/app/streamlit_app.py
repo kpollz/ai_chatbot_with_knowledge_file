@@ -2,9 +2,11 @@
 Streamlit UI for Machine Issue Solver — Chat Page with Streaming
 """
 
+import asyncio
 from datetime import datetime
 import streamlit as st
-from graph import solve_issue_stream, StreamResult
+from graph import solve_issue, solve_issue_stream, StreamResult
+from config import STREAMING_ENABLED
 from history import check_context_limit
 from conversation_store import create_session_id, save_conversation
 from logger import logger
@@ -59,8 +61,15 @@ with st.sidebar:
         st.session_state.api_key = api_key
 
     st.divider()
+    st.header("⚙️ Settings")
+    use_streaming = st.toggle("Enable Streaming", value=STREAMING_ENABLED,
+                              help="ON: text appears word-by-word. OFF: full response at once (more stable).")
+
+    st.divider()
     st.header("⚙️ System Info")
     st.info("Using Company LLM (Gauss)")
+    mode_label = "Streaming" if use_streaming else "Non-streaming"
+    st.caption(f"Response mode: {mode_label}")
     st.success("Connected to Issue API")
 
     # Context usage indicator
@@ -128,29 +137,60 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
     if context_status == "warning":
         st.warning(f"⚠️ Context ~{context_tokens:,} tokens. Consider starting a new session soon.")
 
-    # Process with ReAct agent (streaming via LangChain standard)
+    # Process with ReAct agent
     with st.chat_message("assistant"):
         try:
             history = st.session_state.messages[:-1]
-            stream_result = StreamResult()
+            issues_found = []
 
-            # st.spinner shows indicator while waiting for first token / tool execution
-            with st.spinner("Thinking..."):
-                response = st.write_stream(
-                    solve_issue_stream(prompt, history=history, api_key=api_key,
-                                       result=stream_result)
-                )
+            if use_streaming:
+                # --- Streaming mode with status updates ---
+                stream_result = StreamResult()
+                status_area = st.empty()
+                response_area = st.empty()
+                full_response = ""
+                streaming_started = False
 
-            # Check for errors from the stream
-            if stream_result.error:
-                st.error(f"❌ {stream_result.error}")
-                response = response or f"Error: {stream_result.error}"
+                for event in solve_issue_stream(prompt, history=history,
+                                                api_key=api_key, result=stream_result):
+                    if event["type"] == "status":
+                        status_area.markdown(f"⏳ *{event['message']}*")
+                    elif event["type"] == "chunk":
+                        if not streaming_started:
+                            status_area.empty()
+                            streaming_started = True
+                        full_response += event["text"]
+                        response_area.markdown(full_response + "▌")
 
-            # Show issues if found (after streaming completes)
-            if stream_result.issues:
-                with st.expander(f"📚 Found {len(stream_result.issues)} related issues",
+                # Finalize: remove cursor, clear leftover status
+                status_area.empty()
+                if full_response:
+                    response_area.markdown(full_response)
+                response = full_response
+
+                if stream_result.error:
+                    st.error(f"❌ {stream_result.error}")
+                    response = response or f"Error: {stream_result.error}"
+                issues_found = stream_result.issues
+            else:
+                # --- Non-streaming mode (LangGraph ReAct) ---
+                with st.spinner("Thinking..."):
+                    result = asyncio.run(
+                        solve_issue(prompt, history=history, api_key=api_key)
+                    )
+                if result.get("error"):
+                    st.error(f"❌ {result['error']}")
+                    response = result.get("response") or f"Error: {result['error']}"
+                else:
+                    response = result.get("response", "")
+                st.markdown(response)
+                issues_found = result.get("issues", [])
+
+            # Show issues if found
+            if issues_found:
+                with st.expander(f"📚 Found {len(issues_found)} related issues",
                                  expanded=False):
-                    for j, issue in enumerate(stream_result.issues, 1):
+                    for j, issue in enumerate(issues_found, 1):
                         st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
                         st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
                         st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
@@ -161,7 +201,7 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
         except Exception as e:
             response = f"❌ An error occurred: {str(e)}"
             st.error(response)
-            logger.error(f"Streaming error: {e}")
+            logger.error(f"Chat error: {e}")
 
         response = response or "No response generated."
 
