@@ -31,3 +31,6 @@ Thumbs.db
 
 # Streamlit
 .streamlit/
+
+# Conversation session files
+conversations/

@@ -19,7 +19,7 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import List, Dict
 
 from logger import logger
 
@@ -63,28 +63,3 @@ def save_conversation(session_id: str, messages: List[Dict]) -> None:
         encoding="utf-8",
     )
     logger.info(f"Saved conversation {session_id} ({len(messages)} messages)")
-
-
-def update_feedback(session_id: str, message_index: int, feedback: Optional[str]) -> None:
-    """Update feedback for a specific message in the JSON file."""
-    _ensure_dir()
-    filepath = CONVERSATIONS_DIR / f"session_{session_id}.json"
-
-    if not filepath.exists():
-        logger.warning(f"Session file not found: {session_id}")
-        return
-
-    try:
-        data = json.loads(filepath.read_text(encoding="utf-8"))
-        messages = data.get("messages", [])
-
-        if 0 <= message_index < len(messages):
-            messages[message_index]["feedback"] = feedback
-            data["updated_at"] = datetime.now().isoformat()
-            filepath.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            logger.info(f"Feedback: session={session_id}, msg={message_index}, feedback={feedback}")
-    except Exception as e:
-        logger.error(f"Failed to update feedback: {e}")
