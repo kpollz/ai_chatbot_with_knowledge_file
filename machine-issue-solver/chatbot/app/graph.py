@@ -31,6 +31,8 @@ from logger import logger, Timer
 
 MAX_ITERATIONS = 3
 TOOL_CALL_PATTERN = re.compile(r'<tool_call>(.*?)</tool_call>', re.DOTALL)
+# Fallback: raw JSON with "tool" key (for lightweight models that skip XML tags)
+RAW_TOOL_CALL_PATTERN = re.compile(r'\{[^{}]*"tool"\s*:\s*"[^"]+?"[^{}]*"args"\s*:\s*\{[^{}]*\}[^{}]*\}', re.DOTALL)
 
 SYSTEM_PROMPT = """Ban la "Machine Issue Solver" — tro ly ky thuat chuyen ve cac van de may moc trong nha may.
 
@@ -79,25 +81,45 @@ class GraphState(TypedDict):
 
 # ---- Helpers ----
 
+VALID_TOOLS = {"search_issues", "list_machines", "list_lines"}
+
+
 def parse_tool_call(text: str) -> Optional[Dict]:
-    """Extract tool call from LLM response text."""
+    """Extract tool call from LLM response text.
+
+    Supports two formats:
+      1. <tool_call>{"tool": "...", "args": {...}}</tool_call>  (heavy model)
+      2. {"tool": "...", "args": {...}}                         (fast model)
+    """
+    # Try 1: XML-tagged format
     match = TOOL_CALL_PATTERN.search(text)
-    if not match:
-        return None
-    try:
-        tool_call = json.loads(match.group(1).strip())
-        if "tool" in tool_call:
-            return tool_call
-        return None
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to parse tool call JSON: {match.group(1)}")
-        return None
+    if match:
+        try:
+            tool_call = json.loads(match.group(1).strip())
+            if tool_call.get("tool") in VALID_TOOLS:
+                return tool_call
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse tool call JSON: {match.group(1)}")
+
+    # Try 2: Raw JSON format (fast model)
+    match = RAW_TOOL_CALL_PATTERN.search(text)
+    if match:
+        try:
+            tool_call = json.loads(match.group(0))
+            if tool_call.get("tool") in VALID_TOOLS:
+                logger.info(f"Detected raw JSON tool call (no XML tags)")
+                return tool_call
+        except json.JSONDecodeError:
+            pass
+
+    return None
 
 
 def clean_response(text: str) -> str:
-    """Remove <tool_call> tags and clean up the response text."""
-    cleaned = TOOL_CALL_PATTERN.sub("", text).strip()
-    return cleaned
+    """Remove tool call patterns and clean up the response text."""
+    cleaned = TOOL_CALL_PATTERN.sub("", text)
+    cleaned = RAW_TOOL_CALL_PATTERN.sub("", cleaned)
+    return cleaned.strip()
 
 
 def format_issues_for_scratchpad(issues: List[Dict]) -> str:
@@ -423,8 +445,8 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
     return result_text, issues_found
 
 
-TOOL_CALL_TAG = "<tool_call>"
-PREFIX_BUFFER_SIZE = 20  # chars — enough to detect "<tool_call>" (11 chars)
+TOOL_CALL_PREFIXES = ("<tool_call>", '{"tool"')
+PREFIX_BUFFER_SIZE = 20  # chars — enough to detect "<tool_call>" (11) or '{"tool"' (7)
 
 
 def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
@@ -471,7 +493,7 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                         prefix += text
                         tool_buffer.append(ai_chunk)
 
-                        if TOOL_CALL_TAG in prefix:
+                        if any(tag in prefix for tag in TOOL_CALL_PREFIXES):
                             # Tool call detected — buffer everything
                             is_tool = True
                             prefix_done = True
