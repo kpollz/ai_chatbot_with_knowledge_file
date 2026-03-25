@@ -76,13 +76,15 @@ response = requests.post(
 #     'outputs': [{'inputs': {},
 #                  'outputs':[{
 #                      'results':{
-#                          'text': {
-#                              'text': '{answer-of-llms}',
-#                              'sender':None,
-#                              'sender_name': None,
-#                              'timestamp': '{timestamp}',
-#                              'error': False
-#                          }
+#                         "message":{
+#                             'text': {
+#                                 'text': '{answer-of-llms}',
+#                                 'sender':None,
+#                                 'sender_name': None,
+#                                 'timestamp': '{timestamp}',
+#                                 'error': False
+#                             }
+#                         }
 #                      },
 #                      'timedelta': None,
 #                      'duration': None,
