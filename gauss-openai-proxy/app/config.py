@@ -30,6 +30,9 @@ SSL_VERIFY = os.getenv("SSL_VERIFY", "false").lower() == "true"
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# Tool translation
+TOOL_CALL_ENABLED = os.getenv("TOOL_CALL_ENABLED", "true").lower() == "true"
+
 # Model Registry — copied from machine-issue-solver/chatbot/app/config.py
 # Replace placeholder values with real model-id and model-url
 # Model Registry — copied from machine-issue-solver/chatbot/app/config.py
