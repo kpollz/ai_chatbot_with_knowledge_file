@@ -33,10 +33,17 @@ async def _get(path: str, params: dict = None) -> list:
         raise
 
 
-async def search_issues(machine_name: str, line_name: str) -> List[Dict]:
-    """Search issues by machine name and line name."""
-    issues = await _get("/issues/search", {"machine_name": machine_name, "line_name": line_name})
-    logger.info(f"Issue API returned {len(issues)} issues for machine '{machine_name}' on line '{line_name}'")
+async def search_issues(machine_name: str, line_name: str,
+                        location: str = None, serial: str = None) -> List[Dict]:
+    """Search issues by machine name and line name, with optional location and serial filters."""
+    params = {"machine_name": machine_name, "line_name": line_name}
+    if location:
+        params["location"] = location
+    if serial:
+        params["serial"] = serial
+    issues = await _get("/issues/search", params)
+    logger.info(f"Issue API returned {len(issues)} issues for machine '{machine_name}' on line '{line_name}'"
+                f"{f' location={location}' if location else ''}{f' serial={serial}' if serial else ''}")
     return issues
 
 
@@ -97,17 +104,28 @@ def get_lines_sync() -> List[Dict]:
     return _sync_request("GET", "/lines/")
 
 
+def get_teams_sync() -> List[Dict]:
+    """List all teams."""
+    return _sync_request("GET", "/teams/")
+
+
 def get_machines_sync() -> List[Dict]:
     return _sync_request("GET", "/machines/")
 
 
 # ---- Sync tool functions (for streaming graph) ----
 
-def search_issues_sync(machine_name: str, line_name: str) -> List[Dict]:
+def search_issues_sync(machine_name: str, line_name: str,
+                       location: str = None, serial: str = None) -> List[Dict]:
     """Sync version of search_issues for streaming flow."""
-    issues = _sync_request("GET", "/issues/search",
-                           params={"machine_name": machine_name, "line_name": line_name})
-    logger.info(f"Issue API returned {len(issues)} issues for '{machine_name}' on '{line_name}'")
+    params = {"machine_name": machine_name, "line_name": line_name}
+    if location:
+        params["location"] = location
+    if serial:
+        params["serial"] = serial
+    issues = _sync_request("GET", "/issues/search", params=params)
+    logger.info(f"Issue API returned {len(issues)} issues for '{machine_name}' on '{line_name}'"
+                f"{f' location={location}' if location else ''}{f' serial={serial}' if serial else ''}")
     return issues
 
 
@@ -123,3 +141,17 @@ def list_lines_sync() -> List[Dict]:
     lines = _sync_request("GET", "/lines/")
     logger.info(f"Issue API returned {len(lines)} lines")
     return lines
+
+
+def import_issue_sync(data: Dict) -> Dict:
+    """
+    Import a full Excel row via POST /issues/import.
+    Auto-creates Line, Team, Machine if not found.
+    Returns dict with IssueID and what was created.
+    """
+    result = _sync_request("POST", "/issues/import", json_data=data)
+    logger.info(f"Imported issue ID={result.get('IssueID')}, "
+                f"created_line={result.get('created_line')}, "
+                f"created_team={result.get('created_team')}, "
+                f"created_machine={result.get('created_machine')}")
+    return result

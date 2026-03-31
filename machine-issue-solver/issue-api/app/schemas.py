@@ -23,6 +23,16 @@ class LineResponse(BaseModel):
 
 # ---- Team ----
 
+class TeamCreate(BaseModel):
+    TeamName: str
+    LineID: int
+
+
+class TeamUpdate(BaseModel):
+    TeamName: Optional[str] = None
+    LineID: Optional[int] = None
+
+
 class TeamResponse(BaseModel):
     TeamID: int
     TeamName: Optional[str] = None
@@ -33,6 +43,20 @@ class TeamResponse(BaseModel):
 
 # ---- Machine ----
 
+class MachineCreate(BaseModel):
+    MachineName: str
+    Location: Optional[str] = None
+    Serial: Optional[str] = None
+    TeamID: int
+
+
+class MachineUpdate(BaseModel):
+    MachineName: Optional[str] = None
+    Location: Optional[str] = None
+    Serial: Optional[str] = None
+    TeamID: Optional[int] = None
+
+
 class MachineResponse(BaseModel):
     MachineID: int
     MachineName: str
@@ -41,6 +65,12 @@ class MachineResponse(BaseModel):
     TeamID: int
 
     model_config = _response_config
+
+
+# ---- Line (create) ----
+
+class LineCreate(BaseModel):
+    LineName: str
 
 
 # ---- Issue ----
@@ -90,6 +120,40 @@ class IssueResponse(BaseModel):
     model_config = _response_config
 
 
+# ---- Import (convenience for Excel row) ----
+
+class IssueImportRequest(BaseModel):
+    """Import a full Excel row — auto-creates Line/Team/Machine if not found."""
+    LineName: str
+    TeamName: str
+    MachineName: str
+    Location: Optional[str] = None
+    Serial: Optional[str] = None
+    Date: Optional[str] = None
+    start_time: Optional[str] = None
+    total_time: Optional[str] = None
+    Week: Optional[int] = None
+    Year: Optional[int] = None
+    hien_tuong: Optional[str] = None
+    nguyen_nhan: Optional[str] = None
+    khac_phuc: Optional[str] = None
+    PIC: Optional[str] = None
+    user_input: Optional[str] = None
+
+
+class IssueImportResponse(BaseModel):
+    """Response for import — includes what was created vs reused."""
+    IssueID: int
+    MachineID: int
+    LineID: int
+    TeamID: int
+    created_line: bool
+    created_team: bool
+    created_machine: bool
+
+    model_config = _response_config
+
+
 class IssueSearchResult(BaseModel):
     """Response for the search endpoint — includes machine and line context"""
     IssueID: int
@@ -103,5 +167,7 @@ class IssueSearchResult(BaseModel):
     PIC: Optional[str] = None
     MachineName: Optional[str] = None
     LineName: Optional[str] = None
+    Location: Optional[str] = None
+    Serial: Optional[str] = None
 
     model_config = _response_config

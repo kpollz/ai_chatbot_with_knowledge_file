@@ -43,8 +43,13 @@ Nhiem vu cua ban:
 
 Ban co the su dung cac tool sau:
 
-1. search_issues(machine_name: str, line_name: str)
+1. search_issues(machine_name: str, line_name: str, location: str = null, serial: str = null)
    Tim kiem cac van de lien quan den mot may cu the tren mot line cu the.
+   - machine_name va line_name la bat buoc.
+   - location va serial la tuy chon (optional). Chi them vao khi nguoi dung cung cap thong tin nay.
+   - Vi du: neu nguoi dung noi "may CNC-01 tai vi tri A2" thi them location="A2".
+   - Vi du: neu nguoi dung noi "may CNC-01 so serial SN12345" thi them serial="SN12345".
+   - Neu nguoi dung khong nhac den location hoac serial, KHONG them cac truong nay vao args.
    Tra ve danh sach cac van de voi trieu chung, nguyen nhan, va giai phap.
 
 2. list_machines()
@@ -54,13 +59,23 @@ Ban co the su dung cac tool sau:
    Liet ke tat ca cac day chuyen san xuat.
 
 Cach su dung tool — bao gom CHINH XAC cu phap nay trong cau tra loi:
-<tool_call>{"tool": "search_issues", "args": {"machine_name": "CNC-01", "line_name": "Line 2"}}</tool_call>
+_softmax{"tool": "search_issues", "args": {"machine_name": "CNC-01", "line_name": "Line 2"}}*******/
+
+Vi du voi location:
+_softmax{"tool": "search_issues", "args": {"machine_name": "CNC-01", "line_name": "Line 2", "location": "A2"}}*******/
+
+Vi du voi serial:
+_softmax{"tool": "search_issues", "args": {"machine_name": "CNC-01", "line_name": "Line 2", "serial": "SN12345"}}*******/
+
+Vi du voi ca location va serial:
+_softmax{"tool": "search_issues", "args": {"machine_name": "CNC-01", "line_name": "Line 2", "location": "A2", "serial": "SN12345"}}*******/
 
 Quy tac:
 - Chi goi MOT tool moi lan
-- Neu khong can tool, tra loi truc tiep (KHONG bao gom <tool_call>)
+- Neu khong can tool, tra loi truc tiep (KHONG bao gom _soft)
 - Neu nguoi dung hoi cau hoi chung ("Ban la ai?", "Ban lam duoc gi?"), tra loi truc tiep
 - Neu thieu thong tin (ten may hoac line), hoi nguoi dung mot cach tu nhien thay vi tu choi
+- Neu nguoi dung cung cap location hoac serial, luon truyen vao args cua search_issues
 - Su dung lich su hoi thoai de lay thong tin da biet (vi du: neu nguoi dung da noi ve Line 2, dung lai thong tin do)
 - Tra loi bang tieng Viet neu nguoi dung dung tieng Viet, tieng Anh neu dung tieng Anh"""
 
@@ -237,16 +252,20 @@ async def tool_node(state: GraphState) -> dict:
         if tool_name == "search_issues":
             machine_name = tool_args.get("machine_name", "")
             line_name = tool_args.get("line_name", "")
+            location = tool_args.get("location")
+            serial = tool_args.get("serial")
 
-            with Timer(f"Tool: search_issues({machine_name}, {line_name})"):
-                issues = await search_issues(machine_name, line_name)
+            with Timer(f"Tool: search_issues({machine_name}, {line_name}, location={location}, serial={serial})"):
+                issues = await search_issues(machine_name, line_name, location=location, serial=serial)
 
             issues_found = issues
             if not issues:
-                result_text = (
-                    f"Khong tim thay van de nao cho may '{machine_name}' "
-                    f"tren line '{line_name}'."
-                )
+                desc = f"may '{machine_name}' tren line '{line_name}'"
+                if location:
+                    desc += f" tai vi tri '{location}'"
+                if serial:
+                    desc += f" voi serial '{serial}'"
+                result_text = f"Khong tim thay van de nao cho {desc}."
             else:
                 result_text = format_issues_for_scratchpad(issues)
 
@@ -405,12 +424,18 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
         if tool_name == "search_issues":
             machine_name = tool_args.get("machine_name", "")
             line_name = tool_args.get("line_name", "")
-            with Timer(f"Tool: search_issues({machine_name}, {line_name})"):
-                issues = search_issues_sync(machine_name, line_name)
+            location = tool_args.get("location")
+            serial = tool_args.get("serial")
+            with Timer(f"Tool: search_issues({machine_name}, {line_name}, location={location}, serial={serial})"):
+                issues = search_issues_sync(machine_name, line_name, location=location, serial=serial)
             issues_found = issues
             if not issues:
-                result_text = (f"Khong tim thay van de nao cho may '{machine_name}' "
-                               f"tren line '{line_name}'.")
+                desc = f"may '{machine_name}' tren line '{line_name}'"
+                if location:
+                    desc += f" tai vi tri '{location}'"
+                if serial:
+                    desc += f" voi serial '{serial}'"
+                result_text = f"Khong tim thay van de nao cho {desc}."
             else:
                 result_text = format_issues_for_scratchpad(issues)
 
@@ -454,7 +479,15 @@ def _tool_status_message(tool_name: str, tool_args: Dict) -> str:
     if tool_name == "search_issues":
         machine = tool_args.get("machine_name", "")
         line = tool_args.get("line_name", "")
-        return f"Đang tìm kiếm vấn đề: {machine} trên {line}..."
+        location = tool_args.get("location")
+        serial = tool_args.get("serial")
+        msg = f"Đang tìm kiếm vấn đề: {machine} trên {line}"
+        if location:
+            msg += f", vị trí {location}"
+        if serial:
+            msg += f", serial {serial}"
+        msg += "..."
+        return msg
     elif tool_name == "list_machines":
         return "Đang lấy danh sách máy..."
     elif tool_name == "list_lines":

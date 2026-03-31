@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import API_HOST, API_PORT
-from routes import issue_router, line_router, machine_router
+from routes import issue_router, line_router, machine_router, team_router
 
 app = FastAPI(
     title="Machine Issue API",
@@ -25,6 +25,7 @@ app.add_middleware(
 )
 
 app.include_router(line_router)
+app.include_router(team_router)
 app.include_router(machine_router)
 app.include_router(issue_router)
 
