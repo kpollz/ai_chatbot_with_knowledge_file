@@ -153,37 +153,58 @@ def import_excel(excel_path: str, api_url: str, sheet_name_or_idx=0,
             success += 1
             continue
 
-        # Call API
-        try:
-            with httpx.Client(timeout=30) as client:
-                response = client.post(f"{api_url}/issues/import", json=data)
+    # Call API - create client once outside loop
+    try:
+        with httpx.Client(timeout=30) as client:
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=start_row), start=start_row):
+                total += 1
+                data = parse_row(row)
 
-                if response.status_code == 201:
-                    result = response.json()
-                    flags = []
-                    if result.get("created_line"):
-                        created_lines += 1
-                        flags.append("NEW LINE")
-                    if result.get("created_team"):
-                        created_teams += 1
-                        flags.append("NEW TEAM")
-                    if result.get("created_machine"):
-                        created_machines += 1
-                        flags.append("NEW MACHINE")
+                if not data:
+                    print(f"  Row {row_idx}: Empty — SKIPPED")
+                    skipped += 1
+                    continue
 
-                    flag_str = f" [{', '.join(flags)}]" if flags else ""
-                    print(f"  ✅ Row {row_idx}: Issue #{result['IssueID']}{flag_str}")
+                if not validate_row(data, row_idx):
+                    skipped += 1
+                    continue
+
+                if dry_run:
+                    print(f"  Row {row_idx}: {data.get('LineName')} / {data.get('TeamName')} / "
+                          f"{data.get('MachineName')} — {data.get('hien_tuong', '')[:50]}")
                     success += 1
-                else:
-                    print(f"  ❌ Row {row_idx}: HTTP {response.status_code} — {response.text[:200]}")
+                    continue
+
+                # Call API
+                try:
+                    response = client.post(f"{api_url}/issues/import", json=data)
+
+                    if response.status_code == 201:
+                        result = response.json()
+                        flags = []
+                        if result.get("created_line"):
+                            created_lines += 1
+                            flags.append("NEW LINE")
+                        if result.get("created_team"):
+                            created_teams += 1
+                            flags.append("NEW TEAM")
+                        if result.get("created_machine"):
+                            created_machines += 1
+                            flags.append("NEW MACHINE")
+
+                        flag_str = f" [{', '.join(flags)}]" if flags else ""
+                        print(f"  ✅ Row {row_idx}: Issue #{result['IssueID']}{flag_str}")
+                        success += 1
+                    else:
+                        print(f"  ❌ Row {row_idx}: HTTP {response.status_code} — {response.text[:200]}")
+                        errors += 1
+
+                except Exception as e:
+                    print(f"  ❌ Row {row_idx}: {e}")
                     errors += 1
 
-        except httpx.ConnectError:
-            print(f"\n🚫 Cannot connect to API at {api_url}. Is the service running?")
-            break
-        except Exception as e:
-            print(f"  ❌ Row {row_idx}: {e}")
-            errors += 1
+    except httpx.ConnectError:
+        print(f"\n🚫 Cannot connect to API at {api_url}. Is the service running?")
 
     wb.close()
 
@@ -217,7 +238,7 @@ def main():
     )
     parser.add_argument(
         "--sheet",
-        default=0,
+        default="0",
         help="Sheet name or 0-based index (default: 0 = first sheet)"
     )
     parser.add_argument(
