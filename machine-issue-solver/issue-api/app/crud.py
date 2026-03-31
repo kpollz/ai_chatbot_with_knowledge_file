@@ -242,6 +242,7 @@ async def import_issue(db: AsyncSession, data: IssueImportRequest):
 
     # 4. Create Issue
     issue_data = {
+        "IssueID": await _get_next_id(db, Issue),
         "MachineID": machine.MachineID,
         "Date": data.Date,
         "start_time": data.start_time,
