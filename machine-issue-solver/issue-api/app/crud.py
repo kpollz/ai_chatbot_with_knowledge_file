@@ -2,11 +2,18 @@
 Async CRUD operations for Issue API
 """
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Issue, Machine, Team, Line
 from schemas import IssueCreate, IssueUpdate, IssueImportRequest
+
+
+async def _get_next_id(db: AsyncSession, model_class):
+    """Get next available ID for a model (since DB doesn't have auto-increment)."""
+    result = await db.execute(select(func.max(model_class.__table__.primary_key.columns[0])))
+    max_id = result.scalar()
+    return (max_id or 0) + 1
 
 
 # ---- Line ----
@@ -33,7 +40,7 @@ async def find_line_by_name(db: AsyncSession, line_name: str):
 
 async def create_line(db: AsyncSession, line_name: str):
     """Create a new line and return it."""
-    db_line = Line(LineName=line_name)
+    db_line = Line(LineID=await _get_next_id(db, Line), LineName=line_name)
     db.add(db_line)
     await db.commit()
     await db.refresh(db_line)
@@ -66,7 +73,7 @@ async def find_team_by_name(db: AsyncSession, team_name: str, line_id: int):
 
 async def create_team(db: AsyncSession, team_name: str, line_id: int):
     """Create a new team and return it."""
-    db_team = Team(TeamName=team_name, LineID=line_id)
+    db_team = Team(TeamID=await _get_next_id(db, Team), TeamName=team_name, LineID=line_id)
     db.add(db_team)
     await db.commit()
     await db.refresh(db_team)
@@ -130,8 +137,13 @@ async def find_machine_by_details(db: AsyncSession, machine_name: str, team_id: 
 async def create_machine(db: AsyncSession, machine_name: str, team_id: int,
                          location: str = None, serial: str = None):
     """Create a new machine and return it."""
-    db_machine = Machine(MachineName=machine_name, TeamID=team_id,
-                         Location=location, Serial=serial)
+    db_machine = Machine(
+        MachineID=await _get_next_id(db, Machine),
+        MachineName=machine_name,
+        TeamID=team_id,
+        Location=location,
+        Serial=serial
+    )
     db.add(db_machine)
     await db.commit()
     await db.refresh(db_machine)
@@ -188,7 +200,7 @@ async def search_issues(
 
 
 async def create_issue(db: AsyncSession, issue: IssueCreate):
-    db_issue = Issue(**issue.model_dump())
+    db_issue = Issue(IssueID=await _get_next_id(db, Issue), **issue.model_dump())
     db.add(db_issue)
     await db.commit()
     await db.refresh(db_issue)
