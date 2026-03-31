@@ -79,6 +79,7 @@ class IssueCreate(BaseModel):
     MachineID: int
     Date: Optional[str] = None
     start_time: Optional[str] = None
+    stop_time: Optional[str] = None
     total_time: Optional[str] = None
     Week: Optional[int] = None
     Year: Optional[int] = None
@@ -93,6 +94,7 @@ class IssueUpdate(BaseModel):
     MachineID: Optional[int] = None
     Date: Optional[str] = None
     start_time: Optional[str] = None
+    stop_time: Optional[str] = None
     total_time: Optional[str] = None
     Week: Optional[int] = None
     Year: Optional[int] = None
@@ -108,6 +110,7 @@ class IssueResponse(BaseModel):
     MachineID: int
     Date: Optional[str] = None
     start_time: Optional[str] = None
+    stop_time: Optional[str] = None
     total_time: Optional[str] = None
     Week: Optional[int] = None
     Year: Optional[int] = None
@@ -131,6 +134,7 @@ class IssueImportRequest(BaseModel):
     Serial: Optional[str] = None
     Date: Optional[str] = None
     start_time: Optional[str] = None
+    stop_time: Optional[str] = None
     total_time: Optional[str] = None
     Week: Optional[int] = None
     Year: Optional[int] = None
@@ -160,6 +164,7 @@ class IssueSearchResult(BaseModel):
     MachineID: int
     Date: Optional[str] = None
     start_time: Optional[str] = None
+    stop_time: Optional[str] = None
     total_time: Optional[str] = None
     hien_tuong: Optional[str] = None
     nguyen_nhan: Optional[str] = None

@@ -246,6 +246,7 @@ async def import_issue(db: AsyncSession, data: IssueImportRequest):
         "MachineID": machine.MachineID,
         "Date": data.Date,
         "start_time": data.start_time,
+        "stop_time": data.stop_time,
         "total_time": data.total_time,
         "Week": data.Week,
         "Year": data.Year,

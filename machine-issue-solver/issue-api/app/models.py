@@ -55,6 +55,7 @@ class Issue(Base):
     MachineID = Column(Integer, ForeignKey("Machines.MachineID"), nullable=False)
     Date = Column(Text)
     start_time = Column("Start Time", Text)
+    stop_time = Column("Stop Time", Text)
     total_time = Column("Total Time", Text)
     Week = Column(Integer)
     Year = Column(Integer)
