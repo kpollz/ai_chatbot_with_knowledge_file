@@ -18,7 +18,7 @@ from database import Base
 class Line(Base):
     __tablename__ = "Lines"
 
-    LineID = Column(Integer, primary_key=True, autoincrement=True)
+    LineID = Column(Integer, primary_key=True)
     LineName = Column(Text)
 
     teams = relationship("Team", back_populates="line", cascade="all, delete-orphan")
@@ -27,7 +27,7 @@ class Line(Base):
 class Team(Base):
     __tablename__ = "Teams"
 
-    TeamID = Column(Integer, primary_key=True, autoincrement=True)
+    TeamID = Column(Integer, primary_key=True)
     TeamName = Column(Text)
     LineID = Column(Integer, ForeignKey("Lines.LineID"), nullable=False)
 
@@ -38,7 +38,7 @@ class Team(Base):
 class Machine(Base):
     __tablename__ = "Machines"
 
-    MachineID = Column(Integer, primary_key=True, autoincrement=True)
+    MachineID = Column(Integer, primary_key=True)
     MachineName = Column(Text, nullable=False)
     Location = Column(Text)
     Serial = Column(Text)
@@ -51,7 +51,7 @@ class Machine(Base):
 class Issue(Base):
     __tablename__ = "Issues"
 
-    IssueID = Column(Integer, primary_key=True, autoincrement=True)
+    IssueID = Column(Integer, primary_key=True)
     MachineID = Column(Integer, ForeignKey("Machines.MachineID"), nullable=False)
     Date = Column(Text)
     start_time = Column("Start Time", Text)

@@ -12,8 +12,12 @@ from schemas import IssueCreate, IssueUpdate, IssueImportRequest
 # ---- Line ----
 
 async def get_lines(db: AsyncSession):
-    result = await db.execute(select(Line).order_by(Line.LineID))
-    return result.scalars().all()
+    result = await db.execute(
+        select(Line)
+        .where(Line.LineID.isnot(None))  # Filter NULL rows
+        .order_by(Line.LineID)
+    )
+    return [l for l in result.scalars().all() if l is not None]
 
 
 async def get_line(db: AsyncSession, line_id: int):
@@ -39,8 +43,12 @@ async def create_line(db: AsyncSession, line_name: str):
 # ---- Team ----
 
 async def get_teams(db: AsyncSession):
-    result = await db.execute(select(Team).order_by(Team.TeamID))
-    return result.scalars().all()
+    result = await db.execute(
+        select(Team)
+        .where(Team.TeamID.isnot(None))  # Filter NULL rows
+        .order_by(Team.TeamID)
+    )
+    return [t for t in result.scalars().all() if t is not None]
 
 
 async def get_team(db: AsyncSession, team_id: int):
@@ -90,8 +98,12 @@ async def delete_team(db: AsyncSession, team_id: int):
 # ---- Machine ----
 
 async def get_machines(db: AsyncSession):
-    result = await db.execute(select(Machine).order_by(Machine.MachineID))
-    return result.scalars().all()
+    result = await db.execute(
+        select(Machine)
+        .where(Machine.MachineID.isnot(None))  # Filter NULL rows
+        .order_by(Machine.MachineID)
+    )
+    return [m for m in result.scalars().all() if m is not None]
 
 
 async def get_machine(db: AsyncSession, machine_id: int):
@@ -130,9 +142,13 @@ async def create_machine(db: AsyncSession, machine_name: str, team_id: int,
 
 async def get_issues(db: AsyncSession, skip: int = 0, limit: int = 100):
     result = await db.execute(
-        select(Issue).order_by(Issue.IssueID).offset(skip).limit(limit)
+        select(Issue)
+        .where(Issue.IssueID.isnot(None))  # Filter NULL rows
+        .order_by(Issue.IssueID)
+        .offset(skip)
+        .limit(limit)
     )
-    return result.scalars().all()
+    return [i for i in result.scalars().all() if i is not None]
 
 
 async def get_issue(db: AsyncSession, issue_id: int):
