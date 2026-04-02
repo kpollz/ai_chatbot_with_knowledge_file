@@ -1,178 +1,191 @@
 """
 Pydantic schemas for request/response validation
-
-Note: SQLite is dynamically typed — TEXT columns may contain int/float values.
-We use coerce_numbers_to_str to handle this gracefully.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
+from datetime import datetime
 
-# Shared config: coerce numbers to str for SQLite compatibility
-_response_config = {"from_attributes": True, "coerce_numbers_to_str": True}
-
-
-# ---- Line ----
-
-class LineResponse(BaseModel):
-    LineID: int
-    LineName: Optional[str] = None
-
-    model_config = _response_config
+# Shared config
+_response_config = {"from_attributes": True}
 
 
 # ---- Team ----
 
 class TeamCreate(BaseModel):
-    TeamName: str
-    LineID: int
+    name: str = Field(..., alias="TeamName")
 
-
-class TeamUpdate(BaseModel):
-    TeamName: Optional[str] = None
-    LineID: Optional[int] = None
+    class Config:
+        populate_by_name = True
 
 
 class TeamResponse(BaseModel):
-    TeamID: int
-    TeamName: Optional[str] = None
-    LineID: int
+    id: int = Field(..., alias="TeamID")
+    name: Optional[str] = Field(None, alias="TeamName")
 
-    model_config = _response_config
+    model_config = {**_response_config, "populate_by_name": True}
+
+
+# ---- Line ----
+
+class LineCreate(BaseModel):
+    name: str = Field(..., alias="LineName")
+
+    class Config:
+        populate_by_name = True
+
+
+class LineResponse(BaseModel):
+    id: int = Field(..., alias="LineID")
+    name: Optional[str] = Field(None, alias="LineName")
+
+    model_config = {**_response_config, "populate_by_name": True}
 
 
 # ---- Machine ----
 
 class MachineCreate(BaseModel):
-    MachineName: str
-    Location: Optional[str] = None
-    Serial: Optional[str] = None
-    TeamID: int
+    name: str = Field(..., alias="MachineName")
+    location: Optional[str] = Field(None, alias="Location")
+    serial: Optional[str] = Field(None, alias="Serial")
+    line_id: int = Field(..., alias="LineID")
+
+    class Config:
+        populate_by_name = True
 
 
 class MachineUpdate(BaseModel):
-    MachineName: Optional[str] = None
-    Location: Optional[str] = None
-    Serial: Optional[str] = None
-    TeamID: Optional[int] = None
+    name: Optional[str] = Field(None, alias="MachineName")
+    location: Optional[str] = Field(None, alias="Location")
+    serial: Optional[str] = Field(None, alias="Serial")
+    line_id: Optional[int] = Field(None, alias="LineID")
+
+    class Config:
+        populate_by_name = True
 
 
 class MachineResponse(BaseModel):
-    MachineID: int
-    MachineName: str
-    Location: Optional[str] = None
-    Serial: Optional[str] = None
-    TeamID: int
+    id: int = Field(..., alias="MachineID")
+    name: Optional[str] = Field(None, alias="MachineName")
+    location: Optional[str] = Field(None, alias="Location")
+    serial: Optional[str] = Field(None, alias="Serial")
+    line_id: int = Field(..., alias="LineID")
 
-    model_config = _response_config
-
-
-# ---- Line (create) ----
-
-class LineCreate(BaseModel):
-    LineName: str
+    model_config = {**_response_config, "populate_by_name": True}
 
 
 # ---- Issue ----
 
 class IssueCreate(BaseModel):
-    MachineID: int
-    Date: Optional[str] = None
-    start_time: Optional[str] = None
-    stop_time: Optional[str] = None
-    total_time: Optional[str] = None
-    Week: Optional[int] = None
-    Year: Optional[int] = None
-    hien_tuong: Optional[str] = None    # Hiện tượng (Symptom)
-    nguyen_nhan: Optional[str] = None   # Nguyên nhân (Cause)
-    khac_phuc: Optional[str] = None     # Khắc phục (Solution)
-    PIC: Optional[str] = None
-    user_input: Optional[str] = None
+    machine_id: int = Field(..., alias="MachineID")
+    date: Optional[str] = Field(None, alias="Date")
+    start_time: Optional[str] = Field(None, alias="start_time")
+    stop_time: Optional[str] = Field(None, alias="stop_time")
+    total_time: Optional[str] = Field(None, alias="total_time")
+    week: Optional[int] = Field(None, alias="Week")
+    year: Optional[int] = Field(None, alias="Year")
+    hien_tuong: Optional[str] = Field(None, alias="hien_tuong")
+    nguyen_nhan: Optional[str] = Field(None, alias="nguyen_nhan")
+    khac_phuc: Optional[str] = Field(None, alias="khac_phuc")
+    pic: Optional[str] = Field(None, alias="PIC")
+    user_input: Optional[str] = Field(None, alias="user_input")
+
+    class Config:
+        populate_by_name = True
 
 
 class IssueUpdate(BaseModel):
-    MachineID: Optional[int] = None
-    Date: Optional[str] = None
-    start_time: Optional[str] = None
-    stop_time: Optional[str] = None
-    total_time: Optional[str] = None
-    Week: Optional[int] = None
-    Year: Optional[int] = None
-    hien_tuong: Optional[str] = None
-    nguyen_nhan: Optional[str] = None
-    khac_phuc: Optional[str] = None
-    PIC: Optional[str] = None
-    user_input: Optional[str] = None
+    machine_id: Optional[int] = Field(None, alias="MachineID")
+    date: Optional[str] = Field(None, alias="Date")
+    start_time: Optional[str] = Field(None, alias="start_time")
+    stop_time: Optional[str] = Field(None, alias="stop_time")
+    total_time: Optional[str] = Field(None, alias="total_time")
+    week: Optional[int] = Field(None, alias="Week")
+    year: Optional[int] = Field(None, alias="Year")
+    hien_tuong: Optional[str] = Field(None, alias="hien_tuong")
+    nguyen_nhan: Optional[str] = Field(None, alias="nguyen_nhan")
+    khac_phuc: Optional[str] = Field(None, alias="khac_phuc")
+    pic: Optional[str] = Field(None, alias="PIC")
+    user_input: Optional[str] = Field(None, alias="user_input")
+
+    class Config:
+        populate_by_name = True
 
 
 class IssueResponse(BaseModel):
-    IssueID: int
-    MachineID: int
-    Date: Optional[str] = None
-    start_time: Optional[str] = None
-    stop_time: Optional[str] = None
-    total_time: Optional[str] = None
-    Week: Optional[int] = None
-    Year: Optional[int] = None
-    hien_tuong: Optional[str] = None
-    nguyen_nhan: Optional[str] = None
-    khac_phuc: Optional[str] = None
-    PIC: Optional[str] = None
-    user_input: Optional[str] = None
+    id: int = Field(..., alias="IssueID")
+    machine_id: int = Field(..., alias="MachineID")
+    date: Optional[str] = Field(None, alias="Date")
+    start_time: Optional[str] = Field(None, alias="start_time")
+    stop_time: Optional[str] = Field(None, alias="stop_time")
+    total_time: Optional[str] = Field(None, alias="total_time")
+    week: Optional[int] = Field(None, alias="Week")
+    year: Optional[int] = Field(None, alias="Year")
+    hien_tuong: Optional[str] = Field(None, alias="hien_tuong")
+    nguyen_nhan: Optional[str] = Field(None, alias="nguyen_nhan")
+    khac_phuc: Optional[str] = Field(None, alias="khac_phuc")
+    pic: Optional[str] = Field(None, alias="PIC")
+    user_input: Optional[str] = Field(None, alias="user_input")
 
-    model_config = _response_config
+    model_config = {**_response_config, "populate_by_name": True}
 
 
 # ---- Import (convenience for Excel row) ----
 
 class IssueImportRequest(BaseModel):
-    """Import a full Excel row — auto-creates Line/Team/Machine if not found."""
-    LineName: str
-    TeamName: str
-    MachineName: str
-    Location: Optional[str] = None
-    Serial: Optional[str] = None
-    Date: Optional[str] = None
-    start_time: Optional[str] = None
-    stop_time: Optional[str] = None
-    total_time: Optional[str] = None
-    Week: Optional[int] = None
-    Year: Optional[int] = None
-    hien_tuong: Optional[str] = None
-    nguyen_nhan: Optional[str] = None
-    khac_phuc: Optional[str] = None
-    PIC: Optional[str] = None
-    user_input: Optional[str] = None
+    """Import a full Excel row — auto-creates Team/Line/Machine if not found."""
+    team_name: str = Field(..., alias="TeamName")
+    line_name: str = Field(..., alias="LineName")
+    machine_name: str = Field(..., alias="MachineName")
+    location: Optional[str] = Field(None, alias="Location")
+    serial: Optional[str] = Field(None, alias="Serial")
+    date: Optional[str] = Field(None, alias="Date")
+    start_time: Optional[str] = Field(None, alias="start_time")
+    stop_time: Optional[str] = Field(None, alias="stop_time")
+    total_time: Optional[str] = Field(None, alias="total_time")
+    week: Optional[int] = Field(None, alias="Week")
+    year: Optional[int] = Field(None, alias="Year")
+    hien_tuong: Optional[str] = Field(None, alias="hien_tuong")
+    nguyen_nhan: Optional[str] = Field(None, alias="nguyen_nhan")
+    khac_phuc: Optional[str] = Field(None, alias="khac_phuc")
+    pic: Optional[str] = Field(None, alias="PIC")
+    user_input: Optional[str] = Field(None, alias="user_input")
+
+    class Config:
+        populate_by_name = True
 
 
 class IssueImportResponse(BaseModel):
     """Response for import — includes what was created vs reused."""
-    IssueID: int
-    MachineID: int
-    LineID: int
-    TeamID: int
-    created_line: bool
-    created_team: bool
-    created_machine: bool
+    issue_id: int = Field(..., alias="IssueID")
+    machine_id: int = Field(..., alias="MachineID")
+    line_id: int = Field(..., alias="LineID")
+    team_id: int = Field(..., alias="TeamID")
+    created_team: bool = Field(False, alias="created_team")
+    created_line: bool = Field(False, alias="created_line")
+    created_machine: bool = Field(False, alias="created_machine")
+    is_duplicate: bool = Field(False, alias="is_duplicate")
 
-    model_config = _response_config
+    model_config = {**_response_config, "populate_by_name": True}
 
+
+# ---- Search Result ----
 
 class IssueSearchResult(BaseModel):
     """Response for the search endpoint — includes machine and line context"""
-    IssueID: int
-    MachineID: int
-    Date: Optional[str] = None
-    start_time: Optional[str] = None
-    stop_time: Optional[str] = None
-    total_time: Optional[str] = None
-    hien_tuong: Optional[str] = None
-    nguyen_nhan: Optional[str] = None
-    khac_phuc: Optional[str] = None
-    PIC: Optional[str] = None
-    MachineName: Optional[str] = None
-    LineName: Optional[str] = None
-    Location: Optional[str] = None
-    Serial: Optional[str] = None
+    issue_id: int = Field(..., alias="IssueID")
+    machine_id: int = Field(..., alias="MachineID")
+    date: Optional[str] = Field(None, alias="Date")
+    start_time: Optional[str] = Field(None, alias="start_time")
+    stop_time: Optional[str] = Field(None, alias="stop_time")
+    total_time: Optional[str] = Field(None, alias="total_time")
+    hien_tuong: Optional[str] = Field(None, alias="hien_tuong")
+    nguyen_nhan: Optional[str] = Field(None, alias="nguyen_nhan")
+    khac_phuc: Optional[str] = Field(None, alias="khac_phuc")
+    pic: Optional[str] = Field(None, alias="PIC")
+    machine_name: Optional[str] = Field(None, alias="MachineName")
+    line_name: Optional[str] = Field(None, alias="LineName")
+    location: Optional[str] = Field(None, alias="Location")
+    serial: Optional[str] = Field(None, alias="Serial")
 
-    model_config = _response_config
+    model_config = {**_response_config, "populate_by_name": True}

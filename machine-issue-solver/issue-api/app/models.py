@@ -1,68 +1,110 @@
 """
-SQLAlchemy ORM models mapping to existing SQLite database schema
+SQLAlchemy ORM models for PostgreSQL database
 
-Tables:
-  - Lines (LineID, LineName)
-  - Teams (TeamID, TeamName, LineID)
-  - Machines (MachineID, MachineName, Location, Serial, TeamID)
-  - Issues (IssueID, MachineID, Date, "Start Time", "Total Time", Week, Year,
-            "Hiện tượng", "Nguyên nhân", "Khắc phục", PIC, "User Input")
+Schema:
+  - teams (id, name, created_at)
+  - lines (id, team_id, name, created_at)  
+  - machines (id, line_id, name, location, serial, created_at)
+  - issues (id, machine_id, date, start_time, stop_time, total_time, week, year,
+            hien_tuong, nguyen_nhan, khac_phuc, pic, user_input, created_at)
 """
 
-from sqlalchemy import Column, Integer, Text, ForeignKey
+from datetime import datetime
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
 from database import Base
 
 
-class Line(Base):
-    __tablename__ = "Lines"
-
-    LineID = Column(Integer, primary_key=True)
-    LineName = Column(Text)
-
-    teams = relationship("Team", back_populates="line", cascade="all, delete-orphan")
-
-
 class Team(Base):
-    __tablename__ = "Teams"
+    __tablename__ = "teams"
 
-    TeamID = Column(Integer, primary_key=True)
-    TeamName = Column(Text)
-    LineID = Column(Integer, ForeignKey("Lines.LineID"), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    line = relationship("Line", back_populates="teams")
-    machines = relationship("Machine", back_populates="team", cascade="all, delete-orphan")
+    # Relationships
+    lines = relationship("Line", back_populates="team", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Team(id={self.id}, name='{self.name}')>"
+
+
+class Line(Base):
+    __tablename__ = "lines"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    team = relationship("Team", back_populates="lines")
+    machines = relationship("Machine", back_populates="line", cascade="all, delete-orphan")
+
+    # Unique constraint handled by Index below
+    __table_args__ = (
+        Index('idx_lines_team_name', 'team_id', 'name', unique=True),
+    )
+
+    def __repr__(self):
+        return f"<Line(id={self.id}, name='{self.name}', team_id={self.team_id})>"
 
 
 class Machine(Base):
-    __tablename__ = "Machines"
+    __tablename__ = "machines"
 
-    MachineID = Column(Integer, primary_key=True)
-    MachineName = Column(Text, nullable=False)
-    Location = Column(Text)
-    Serial = Column(Text)
-    TeamID = Column(Integer, ForeignKey("Teams.TeamID"), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    line_id = Column(Integer, ForeignKey("lines.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    location = Column(String(255), nullable=True)
+    serial = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
-    team = relationship("Team", back_populates="machines")
+    # Relationships
+    line = relationship("Line", back_populates="machines")
     issues = relationship("Issue", back_populates="machine", cascade="all, delete-orphan")
+
+    # Indexes for fast search
+    __table_args__ = (
+        Index('idx_machines_search', 'line_id', 'name', 'location', 'serial'),
+        Index('idx_machines_unique', 'line_id', 'name', 'location', 'serial', unique=True, 
+              postgresql_where="(location IS NOT NULL OR serial IS NOT NULL)"),
+    )
+
+    def __repr__(self):
+        return f"<Machine(id={self.id}, name='{self.name}', line_id={self.line_id})>"
 
 
 class Issue(Base):
-    __tablename__ = "Issues"
+    __tablename__ = "issues"
 
-    IssueID = Column(Integer, primary_key=True)
-    MachineID = Column(Integer, ForeignKey("Machines.MachineID"), nullable=False)
-    Date = Column(Text)
-    start_time = Column("Start Time", Text)
-    stop_time = Column("Stop Time", Text)
-    total_time = Column("Total Time", Text)
-    Week = Column(Integer)
-    Year = Column(Integer)
-    hien_tuong = Column("Hiện tượng", Text)    # Symptom
-    nguyen_nhan = Column("Nguyên nhân", Text)  # Cause
-    khac_phuc = Column("Khắc phục", Text)      # Solution
-    PIC = Column(Text)
-    user_input = Column("User Input", Text)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    machine_id = Column(Integer, ForeignKey("machines.id", ondelete="CASCADE"), nullable=False)
+    
+    # Issue details
+    date = Column(DateTime, nullable=True)
+    start_time = Column(String(50), nullable=True)
+    stop_time = Column(String(50), nullable=True)
+    total_time = Column(String(50), nullable=True)
+    week = Column(Integer, nullable=True)
+    year = Column(Integer, nullable=True)
+    hien_tuong = Column(Text, nullable=True)      # Hiện tượng (Symptom)
+    nguyen_nhan = Column(Text, nullable=True)     # Nguyên nhân (Cause)
+    khac_phuc = Column(Text, nullable=True)       # Khắc phục (Solution)
+    pic = Column(String(255), nullable=True)      # PIC
+    user_input = Column(Text, nullable=True)      # User Input
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Relationships
     machine = relationship("Machine", back_populates="issues")
+
+    # Indexes
+    __table_args__ = (
+        Index('idx_issues_machine', 'machine_id'),
+        Index('idx_issues_machine_hien_tuong', 'machine_id', 'hien_tuong'),  # For duplicate check
+    )
+
+    def __repr__(self):
+        return f"<Issue(id={self.id}, machine_id={self.machine_id})>"

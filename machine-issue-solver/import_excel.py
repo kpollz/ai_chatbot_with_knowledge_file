@@ -130,6 +130,7 @@ def import_excel(excel_path: str, api_url: str, sheet_name_or_idx=0,
     success = 0
     skipped = 0
     errors = 0
+    duplicates = 0
     created_lines = 0
     created_teams = 0
     created_machines = 0
@@ -181,6 +182,13 @@ def import_excel(excel_path: str, api_url: str, sheet_name_or_idx=0,
 
                     if response.status_code == 201:
                         result = response.json()
+                        
+                        # Check if duplicate
+                        if result.get("is_duplicate"):
+                            print(f"  ⚠️ Row {row_idx}: DUPLICATE Issue #{result['IssueID']} (skipped)")
+                            duplicates += 1
+                            continue
+                        
                         flags = []
                         if result.get("created_line"):
                             created_lines += 1
@@ -214,6 +222,7 @@ def import_excel(excel_path: str, api_url: str, sheet_name_or_idx=0,
     print(f"📊 Summary:")
     print(f"   Total rows:   {total}")
     print(f"   Successful:   {success}")
+    print(f"   Duplicates:   {duplicates}")
     print(f"   Skipped:      {skipped}")
     print(f"   Errors:       {errors}")
     if not dry_run:

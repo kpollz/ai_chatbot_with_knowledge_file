@@ -2,10 +2,11 @@
 fastapi
 uvicorn[standard]
 
-# Async database
+# Async PostgreSQL
 sqlalchemy[asyncio]
-aiosqlite
+asyncpg
 
 # Utilities
 python-dotenv
 pydantic
+faker

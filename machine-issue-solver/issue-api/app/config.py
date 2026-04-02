@@ -1,16 +1,17 @@
 """
-Configuration for Issue API
+Configuration for Issue API (PostgreSQL)
 """
 
 import os
-from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database
-DB_PATH = os.getenv("DB_PATH", str(Path(__file__).parent.parent / "database" / "issues.db"))
-DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
+# Database - PostgreSQL with asyncpg
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/issue_api"
+)
 
 # API Server
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
