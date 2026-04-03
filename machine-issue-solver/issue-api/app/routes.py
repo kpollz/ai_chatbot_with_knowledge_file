@@ -53,13 +53,13 @@ async def create_team(team: TeamCreate, db: AsyncSession = Depends(get_db)):
 
 @team_router.get("/find/by-name", response_model=TeamResponse)
 async def find_team_by_name(
-    name: str = Query(..., description="Team name to find"),
+    team_name: str = Query(..., description="Team name to find"),
     db: AsyncSession = Depends(get_db),
 ):
     """Find a team by name. Returns 404 if not found."""
-    team = await crud.find_team_by_name(db, name)
+    team = await crud.find_team_by_name(db, team_name)
     if not team:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+        raise HTTPException(status_code=404, detail=f"Team '{team_name}' not found")
     return team
 
 
@@ -110,14 +110,14 @@ async def create_line(line: LineCreate, db: AsyncSession = Depends(get_db)):
 
 @line_router.get("/find/by-name", response_model=LineResponse)
 async def find_line_by_name(
-    name: str = Query(..., description="Line name to find"),
+    line_name: str = Query(..., description="Line name to find"),
     team_id: int = Query(..., description="Team ID to search within"),
     db: AsyncSession = Depends(get_db),
 ):
     """Find a line by name within a specific team."""
-    line = await crud.find_line_by_name_and_team(db, name, team_id)
+    line = await crud.find_line_by_name_and_team(db, line_name, team_id)
     if not line:
-        raise HTTPException(status_code=404, detail=f"Line '{name}' not found in team {team_id}")
+        raise HTTPException(status_code=404, detail=f"Line '{line_name}' not found in team {team_id}")
     return line
 
 
@@ -174,10 +174,10 @@ async def create_machine(machine: MachineCreate, db: AsyncSession = Depends(get_
 
 @machine_router.get("/find/by-details", response_model=List[MachineResponse])
 async def find_machine_by_details(
-    name: str = Query(..., description="Machine name", alias="MachineName"),
-    line_id: int = Query(..., description="Line ID", alias="LineID"),
-    location: str = Query(None, description="Optional location filter", alias="Location"),
-    serial: str = Query(None, description="Optional serial filter", alias="Serial"),
+    machine_name: str = Query(..., description="Machine name"),
+    line_id: int = Query(..., description="Line ID"),
+    location: str = Query(None, description="Optional location filter"),
+    serial: str = Query(None, description="Optional serial filter"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -188,7 +188,7 @@ async def find_machine_by_details(
       (including variants with/without location/serial)
     """
     machines = await crud.find_machine_by_details(
-        db, name, line_id, location=location, serial=serial,
+        db, machine_name, line_id, location=location, serial=serial,
     )
     if not machines:
         raise HTTPException(status_code=404, detail="No machines found")
@@ -235,10 +235,10 @@ async def list_issues(
 
 @issue_router.get("/search", response_model=List[IssueSearchResult])
 async def search_issues(
-    machine_name: str = Query(..., description="Machine name to search", alias="MachineName"),
-    line_name: str = Query(..., description="Line name to search", alias="LineName"),
-    location: str = Query(None, description="Optional machine location filter", alias="Location"),
-    serial: str = Query(None, description="Optional machine serial filter", alias="Serial"),
+    machine_name: str = Query(..., description="Machine name to search"),
+    line_name: str = Query(..., description="Line name to search"),
+    location: str = Query(None, description="Optional machine location filter"),
+    serial: str = Query(None, description="Optional machine serial filter"),
     db: AsyncSession = Depends(get_db),
 ):
     """Search issues by machine name and line name, with optional location and serial filters — used by the chatbot."""
