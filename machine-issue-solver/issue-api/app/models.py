@@ -35,7 +35,7 @@ class Line(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
-    name = Column(String(255), nullable=False)
+    line_number = Column(Integer, nullable=False)  # Changed from name to line_number (integer)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -44,7 +44,7 @@ class Line(Base):
 
     # Unique constraint handled by Index below
     __table_args__ = (
-        Index('idx_lines_team_name', 'team_id', 'name', unique=True),
+        Index('idx_lines_team_number', 'team_id', 'line_number', unique=True),
     )
 
     def __repr__(self):

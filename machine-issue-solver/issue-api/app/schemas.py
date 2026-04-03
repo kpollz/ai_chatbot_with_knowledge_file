@@ -2,9 +2,10 @@
 Pydantic schemas for request/response validation
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
+import re
 
 # Shared config
 _response_config = {"from_attributes": True}
@@ -29,7 +30,17 @@ class TeamResponse(BaseModel):
 # ---- Line ----
 
 class LineCreate(BaseModel):
-    name: str = Field(..., alias="LineName")
+    line_number: int = Field(..., alias="LineName")
+    
+    @field_validator('line_number', mode='before')
+    @classmethod
+    def parse_line_number(cls, v):
+        """Parse line number string (e.g., '2', '02') to integer"""
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            return int(v.strip())
+        raise ValueError(f"Line number must be string or int, got {type(v)}")
 
     class Config:
         populate_by_name = True
@@ -37,7 +48,7 @@ class LineCreate(BaseModel):
 
 class LineResponse(BaseModel):
     id: int = Field(..., alias="LineID")
-    name: Optional[str] = Field(None, alias="LineName")
+    line_number: int = Field(..., alias="LineName")
 
     model_config = {**_response_config, "populate_by_name": True}
 
@@ -184,7 +195,7 @@ class IssueSearchResult(BaseModel):
     khac_phuc: Optional[str] = Field(None, alias="khac_phuc")
     pic: Optional[str] = Field(None, alias="PIC")
     machine_name: Optional[str] = Field(None, alias="MachineName")
-    line_name: Optional[str] = Field(None, alias="LineName")
+    line_number: int = Field(..., alias="LineName")  # Changed to int
     location: Optional[str] = Field(None, alias="Location")
     serial: Optional[str] = Field(None, alias="Serial")
 

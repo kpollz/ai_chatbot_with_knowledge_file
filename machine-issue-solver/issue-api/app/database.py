@@ -39,8 +39,10 @@ async def get_db():
 
 
 async def init_db():
-    """Initialize database tables"""
+    """Initialize database tables - drop and recreate for schema changes (dev only)"""
     async with engine.begin() as conn:
+        # Drop all tables first (for development - removes old schema)
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
 

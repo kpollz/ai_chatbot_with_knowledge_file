@@ -110,12 +110,13 @@ async def create_line(line: LineCreate, db: AsyncSession = Depends(get_db)):
 
 @line_router.get("/find/by-name", response_model=LineResponse)
 async def find_line_by_name(
-    line_name: str = Query(..., description="Line name to find"),
+    line_name: str = Query(..., description="Line number to find (e.g., '2' or '02')"),
     team_id: int = Query(..., description="Team ID to search within"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Find a line by name within a specific team."""
-    line = await crud.find_line_by_name_and_team(db, line_name, team_id)
+    """Find a line by number within a specific team."""
+    line_number = crud.parse_line_number(line_name)
+    line = await crud.find_line_by_number_and_team(db, line_number, team_id)
     if not line:
         raise HTTPException(status_code=404, detail=f"Line '{line_name}' not found in team {team_id}")
     return line
@@ -236,13 +237,14 @@ async def list_issues(
 @issue_router.get("/search", response_model=List[IssueSearchResult])
 async def search_issues(
     machine_name: str = Query(..., description="Machine name to search"),
-    line_name: str = Query(..., description="Line name to search"),
+    line_name: str = Query(..., description="Line number to search (e.g., '2' or '02')"),
     location: str = Query(None, description="Optional machine location filter"),
     serial: str = Query(None, description="Optional machine serial filter"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search issues by machine name and line name, with optional location and serial filters — used by the chatbot."""
-    rows = await crud.search_issues(db, machine_name, line_name, location=location, serial=serial)
+    """Search issues by machine name and line number, with optional location and serial filters — used by the chatbot."""
+    line_number = crud.parse_line_number(line_name)
+    rows = await crud.search_issues(db, machine_name, line_number, location=location, serial=serial)
     return [
         IssueSearchResult(
             IssueID=issue.id,

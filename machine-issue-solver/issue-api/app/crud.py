@@ -4,11 +4,20 @@ Async CRUD operations for PostgreSQL Issue API
 
 from typing import Optional, Tuple, List, Any
 from datetime import datetime
+import re
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Issue, Machine, Line, Team
 from schemas import IssueCreate, IssueUpdate, IssueImportRequest
+
+
+# Helper: Parse line number from string (e.g., "02", "2" → 2)
+def parse_line_number(line_str) -> int:
+    """Parse line number from string (e.g., '2', '02') to int."""
+    if isinstance(line_str, int):
+        return line_str
+    return int(str(line_str).strip())
 
 
 # Helper: Get next ID (not needed for PostgreSQL SERIAL, but kept for compatibility)
@@ -59,28 +68,28 @@ async def get_line(db: AsyncSession, line_id: int) -> Optional[Line]:
     return result.scalar_one_or_none()
 
 
-async def find_line_by_name(db: AsyncSession, line_name: str) -> Optional[Line]:
-    """Find a line by its name (case-insensitive). Returns None if not found."""
+async def find_line_by_number(db: AsyncSession, line_number: int) -> Optional[Line]:
+    """Find a line by its line_number. Returns None if not found."""
     result = await db.execute(
-        select(Line).where(func.lower(Line.name) == func.lower(line_name))
+        select(Line).where(Line.line_number == line_number)
     )
     return result.scalars().first()
 
 
-async def find_line_by_name_and_team(db: AsyncSession, line_name: str, team_id: int) -> Optional[Line]:
-    """Find a line by name within a specific team. Returns None if not found."""
+async def find_line_by_number_and_team(db: AsyncSession, line_number: int, team_id: int) -> Optional[Line]:
+    """Find a line by number within a specific team. Returns None if not found."""
     result = await db.execute(
         select(Line).where(
-            func.lower(Line.name) == func.lower(line_name),
+            Line.line_number == line_number,
             Line.team_id == team_id
         )
     )
     return result.scalars().first()
 
 
-async def create_line(db: AsyncSession, line_name: str, team_id: int) -> Line:
+async def create_line(db: AsyncSession, line_number: int, team_id: int) -> Line:
     """Create a new line and return it."""
-    db_line = Line(name=line_name, team_id=team_id)
+    db_line = Line(line_number=line_number, team_id=team_id)
     db.add(db_line)
     await db.commit()
     await db.refresh(db_line)
@@ -245,20 +254,20 @@ async def get_issue(db: AsyncSession, issue_id: int) -> Optional[Issue]:
 async def search_issues(
     db: AsyncSession,
     machine_name: str,
-    line_name: str,
+    line_number: int,
     location: Optional[str] = None,
     serial: Optional[str] = None,
 ) -> List[Tuple[Any, ...]]:
     """
-    Search issues by machine name and line name, with optional location and serial filters.
-    Returns list of tuples: (Issue, machine_name, line_name, location, serial).
+    Search issues by machine name and line number, with optional location and serial filters.
+    Returns list of tuples: (Issue, machine_name, line_number, location, serial).
     """
     stmt = (
-        select(Issue, Machine.name, Line.name, Machine.location, Machine.serial)
+        select(Issue, Machine.name, Line.line_number, Machine.location, Machine.serial)
         .join(Machine, Issue.machine_id == Machine.id)
         .join(Line, Machine.line_id == Line.id)
         .where(func.lower(Machine.name) == func.lower(machine_name))
-        .where(func.lower(Line.name) == func.lower(line_name))
+        .where(Line.line_number == line_number)
     )
 
     # Optional filters — only applied when provided
@@ -316,6 +325,9 @@ async def import_issue(
     created_machine = False
     is_duplicate = False
 
+    # Parse line number from string (e.g., "02" → 2)
+    line_number = parse_line_number(data.line_name)
+
     # 1. Find or create Team
     team = await find_team_by_name(db, data.team_name)
     if not team:
@@ -323,9 +335,9 @@ async def import_issue(
         created_team = True
 
     # 2. Find or create Line (within team)
-    line = await find_line_by_name_and_team(db, data.line_name, team.id)
+    line = await find_line_by_number_and_team(db, line_number, team.id)
     if not line:
-        line = await create_line(db, data.line_name, team.id)
+        line = await create_line(db, line_number, team.id)
         created_line = True
 
     # 3. Find or create Machine (within line)
