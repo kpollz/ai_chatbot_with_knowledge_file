@@ -39,10 +39,9 @@ async def get_db():
 
 
 async def init_db():
-    """Initialize database tables - drop and recreate for schema changes (dev only)"""
+    """Initialize database tables - create if not exist (production safe)"""
     async with engine.begin() as conn:
-        # Drop all tables first (for development - removes old schema)
-        await conn.run_sync(Base.metadata.drop_all)
+        # Only create tables if they don't exist (NEVER drop in production!)
         await conn.run_sync(Base.metadata.create_all)
 
 
