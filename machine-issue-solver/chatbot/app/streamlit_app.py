@@ -89,6 +89,10 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = create_session_id()
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "processing" not in st.session_state:
+    st.session_state.processing = False  # Flag to prevent concurrent queries
+if "pending_query" not in st.session_state:
+    st.session_state.pending_query = None  # Store query to process after rerun
 
 session_id = st.session_state.session_id
 
@@ -121,26 +125,47 @@ if context_status == "exceeded":
     st.error("⚠️ **Session context limit reached.** Please clear the chat and start a new session.")
 
 # ---- API key check ----
-chat_disabled = context_status == "exceeded" or not api_key
+chat_disabled = context_status == "exceeded" or not api_key or st.session_state.processing
 if not api_key:
     st.info("🔑 Please enter your LLM API Key in the sidebar to start chatting.")
+elif st.session_state.processing:
+    st.info("⏳ Đang xử lý câu hỏi... Vui lòng đợi.")
 
 
 # ---- Chat input ----
-if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disabled):
-    # Add user message
+prompt = st.chat_input(
+    "Ask about a machine issue..." if not st.session_state.processing else "Đang xử lý, vui lòng đợi...",
+    disabled=chat_disabled
+)
+
+# Handle new user input
+if prompt and not st.session_state.processing:
+    # Store query and set processing flag
+    st.session_state.pending_query = prompt
+    st.session_state.processing = True
+    
+    # Add user message to display
     user_msg = {"role": "user", "content": prompt, "timestamp": datetime.now().isoformat()}
     st.session_state.messages.append(user_msg)
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    
+    # Rerun to show user message and disable input
+    st.rerun()
 
+
+# ---- Process pending query ----
+if st.session_state.processing and st.session_state.pending_query:
+    prompt = st.session_state.pending_query
+    
+    # Clear pending query so we don't process again
+    st.session_state.pending_query = None
+    
     if context_status == "warning":
         st.warning(f"⚠️ Context ~{context_tokens:,} tokens. Consider starting a new session soon.")
 
     # Process with ReAct agent
     with st.chat_message("assistant"):
         try:
-            history = st.session_state.messages[:-1]
+            history = st.session_state.messages[:-1]  # Exclude current user message
             issues_found = []
 
             if use_streaming:
@@ -191,7 +216,7 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
                 with st.expander(f"📚 Found {len(issues_found)} related issues",
                                  expanded=False):
                     for j, issue in enumerate(issues_found, 1):
-                        st.markdown(f"**Issue {j}:** ({issue.get('Date', 'N/A')})")
+                        st.markdown(f"**Issue #{issue.get('IssueID', 'N/A')}**")
                         st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
                         st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
                         st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
@@ -220,10 +245,18 @@ if prompt := st.chat_input("Ask about a machine issue...", disabled=chat_disable
 
         # Auto-save conversation
         save_conversation(session_id, st.session_state.messages)
+        
+        # Reset processing flag to enable input again
+        st.session_state.processing = False
+        
+        # Rerun to update UI (enable input)
+        st.rerun()
 
 
 # ---- Clear chat ----
 if st.sidebar.button("🗑️ Clear Chat (New Session)"):
     st.session_state.messages = []
     st.session_state.session_id = create_session_id()
+    st.session_state.processing = False
+    st.session_state.pending_query = None
     st.rerun()
