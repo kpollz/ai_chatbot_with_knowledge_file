@@ -19,7 +19,7 @@ import requests as req_lib
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage, AIMessageChunk, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGeneration, ChatGenerationChunk
-from langfuse import observe, get_current_observation
+from langfuse import observe, get_client
 from pydantic import Field
 
 from config import COMPANY_MODELS, COMPANY_LLM_API_KEY, COMPANY_LLM_MODEL_ID, COMPANY_LLM_MODEL_URL
@@ -107,7 +107,7 @@ class ChatCompanyLLM(BaseChatModel):
 
     # ---- Streaming (LangChain standard interface) ----
 
-    @observe(name="llm_stream")
+    @observe(name="llm_stream", as_type="generation")
     def _stream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                 run_manager: Optional[Any] = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
         """
@@ -115,6 +115,9 @@ class ChatCompanyLLM(BaseChatModel):
 
         This makes llm.stream(messages) work, which yields AIMessageChunk.
         Streamlit's st.write_stream() natively handles AIMessageChunk.
+        
+        Langfuse v4: @observe with as_type="generation" auto-captures inputs/outputs.
+        Use get_client().update_current_generation() for metadata/model info.
         """
         user_prompt, system_prompt = self._parse_messages(messages)
         model_config = self._get_model_config()
@@ -122,14 +125,12 @@ class ChatCompanyLLM(BaseChatModel):
         params = {'stream': 'true'}
         json_data = self._build_request_body(user_prompt, system_prompt, stream=True)
 
-        # Get current observation for Langfuse v4
-        observation = get_current_observation()
-        if observation:
-            observation.update(
-                input=user_prompt,
-                model=self.model,
-                metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "true"}
-            )
+        # Update current generation with model info (Langfuse v4 pattern)
+        client = get_client()
+        client.update_current_generation(
+            model=self.model,
+            metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "true"}
+        )
 
         start_time = time.time()
         logger.info(f"Calling Company LLM (streaming): {self.model}")
@@ -161,36 +162,37 @@ class ChatCompanyLLM(BaseChatModel):
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning(f"Skipping malformed streaming line: {e}")
 
-        # Update Langfuse with complete output
-        if observation:
-            observation.update(output="".join(full_output))
         logger.info(f"Streaming completed in {time.time() - start_time:.2f}s")
 
     # ---- Sync (LangChain interface) ----
 
-    @observe(name="llm_generate")
+    @observe(name="llm_generate", as_type="generation")
     def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                   run_manager: Optional[Any] = None, **kwargs: Any) -> ChatResult:
+        """
+        LangChain sync interface — returns ChatResult.
+        
+        Langfuse v4: @observe with as_type="generation" auto-captures inputs/outputs.
+        Use get_client().update_current_generation() for metadata/model info.
+        """
         user_prompt, system_prompt = self._parse_messages(messages)
         model_config = self._get_model_config()
         headers = {'Content-Type': 'application/json', 'x-api-key': self.api_key}
         params = {'stream': 'false'}
         json_data = self._build_request_body(user_prompt, system_prompt)
 
-        # Get current observation for Langfuse v4
-        observation = get_current_observation()
-        if observation:
-            observation.update(
-                input=user_prompt,
-                model=self.model,
-                metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "false"}
-            )
+        # Update current generation with model info (Langfuse v4 pattern)
+        lf_client = get_client()
+        lf_client.update_current_generation(
+            model=self.model,
+            metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "false"}
+        )
 
         start_time = time.time()
         logger.info(f"Calling Company LLM (sync): {self.model}")
 
-        with httpx.Client(timeout=self.timeout, verify=False) as client:
-            response = client.post(
+        with httpx.Client(timeout=self.timeout, verify=False) as http_client:
+            response = http_client.post(
                 model_config["model-url"],
                 params=params, headers=headers, json=json_data
             )
@@ -199,7 +201,7 @@ class ChatCompanyLLM(BaseChatModel):
         text = self._parse_response(response.json())
         logger.info(f"LLM response received in {time.time() - start_time:.2f}s")
 
-        # Return result - Langfuse v4 captures return value as output automatically
+        # Return result - @observe auto-captures return value as output
         message = AIMessage(content=text)
         return ChatResult(generations=[ChatGeneration(message=message)])
 

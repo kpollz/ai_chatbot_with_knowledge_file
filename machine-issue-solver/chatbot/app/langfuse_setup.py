@@ -16,13 +16,14 @@ This module provides:
   - Helper for flushing events (important for short-lived processes)
 
 Basic Usage:
-    from langfuse_setup import observe, get_current_observation
+    from langfuse_setup import observe, get_client
     
     @observe(name="my_function")
     def my_function():
-        obs = get_current_observation()
-        if obs:
-            obs.update(metadata={"key": "value"})
+        # Inputs/outputs are auto-captured by @observe decorator
+        # To update metadata on the current observation:
+        client = get_client()
+        client.update_current_span(metadata={"key": "value"})
         return result
 
 Setting Trace Attributes (session_id, user_id):
@@ -38,8 +39,6 @@ Setting Trace Attributes (session_id, user_id):
 
 from langfuse import (
     observe,
-    get_current_observation,
-    get_current_trace,
     get_client,
     propagate_attributes,
 )
@@ -81,63 +80,60 @@ def shutdown_langfuse(timeout: float = 30.0) -> None:
 
 def update_current_observation_safe(**kwargs) -> bool:
     """
-    Safely update the current observation if one exists.
+    Safely update the current span/observation if one exists.
     
-    This is a convenience wrapper that handles the case where
-    no observation is active (e.g., Langfuse not configured).
+    In Langfuse v4, use get_client().update_current_span() or
+    get_client().update_current_generation() instead of the old
+    get_current_observation() pattern.
     
     Args:
-        **kwargs: Parameters to pass to observation.update()
+        **kwargs: Parameters to pass to update_current_span()
+            Supported keys: metadata, input, output, usage_details, etc.
         
     Returns:
-        True if update was successful, False if no active observation
+        True if update was attempted, False if client unavailable
     """
-    obs = get_current_observation()
-    if obs:
-        obs.update(**kwargs)
-        return True
+    try:
+        client = get_client()
+        if client:
+            client.update_current_span(**kwargs)
+            return True
+    except Exception:
+        pass
     return False
 
 
-def set_trace_attributes(session_id: str = None, user_id: str = None, **kwargs) -> bool:
+def update_current_generation_safe(**kwargs) -> bool:
     """
-    Set trace attributes using propagate_attributes context manager.
+    Safely update the current generation observation if one exists.
     
-    In Langfuse v4, trace attributes (session_id, user_id, metadata, tags)
-    are propagated to all observations via propagate_attributes().
-    
-    This function is a placeholder - you should use propagate_attributes()
-    as a context manager in your code:
-    
-    Example:
-        from langfuse import observe, propagate_attributes
-        
-        @observe()
-        def my_func():
-            with propagate_attributes(session_id="sess-123", user_id="user-456"):
-                # Your code here
-                pass
+    Use this for LLM call spans (generation type) to update
+    model-specific attributes like usage_details.
     
     Args:
-        session_id: Session identifier
-        user_id: User identifier
-        **kwargs: Additional metadata (must be dict[str, str] in v4)
+        **kwargs: Parameters to pass to update_current_generation()
+            Supported keys: metadata, input, output, usage_details, model, etc.
         
     Returns:
-        False (this function is for documentation only)
+        True if update was attempted, False if client unavailable
     """
+    try:
+        client = get_client()
+        if client:
+            client.update_current_generation(**kwargs)
+            return True
+    except Exception:
+        pass
     return False
 
 
 # Re-export commonly used items for convenience
 __all__ = [
     "observe",
-    "get_current_observation", 
-    "get_current_trace",
     "get_client",
     "propagate_attributes",
     "flush_langfuse",
     "shutdown_langfuse",
     "update_current_observation_safe",
-    "set_trace_attributes",
+    "update_current_generation_safe",
 ]

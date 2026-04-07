@@ -11,11 +11,12 @@ Flow:
 """
 
 from typing import Optional, List, Dict
+from contextlib import nullcontext
 import json
 import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langfuse import observe
+from langfuse import observe, propagate_attributes
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
 from api_client import search_issues_sync
@@ -203,119 +204,130 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     Streaming generator yielding event dicts for Streamlit rendering.
     
     Creates ONE Langfuse Trace per query with nested spans.
+    
+    Langfuse v4: session_id and user_id are propagated via propagate_attributes()
+    context manager so all nested @observe calls inherit these attributes.
 
     Event types:
       {"type": "status", "message": "..."}  — progress indicator for UI
       {"type": "chunk",  "text": "..."}     — text chunk to append to response
 
     Flow:
-      1st LLM call: prefix-buffer (~20 chars) to detect <tool_call>
+      1st LLM call: prefix-buffer (~20 chars) to detect ৩
         → Tool: show status, execute, stream 2nd call with status
         → No tool: flush buffer, stream remaining chunks
     """
     logger.info(f"Processing query (streaming): {query}")
     history = history or []
     
-    # Note: In Langfuse v4, to set session_id and user_id, use propagate_attributes()
-    # context manager around the code that creates observations.
-    # Example: with propagate_attributes(session_id=..., user_id=...): ...
-    # For now, we skip setting these optional trace attributes to keep the code simple.
+    # Langfuse v4: propagate session_id and user_id to all nested observations
+    propagate_kwargs = {}
+    if session_id:
+        propagate_kwargs["session_id"] = session_id
+    if user_id:
+        propagate_kwargs["user_id"] = user_id
+    
     scratchpad = ""
     all_issues = []
 
     llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
 
-    try:
-        for iteration in range(MAX_ITERATIONS + 1):
-            messages = _build_agent_messages(query, history, scratchpad)
+    # Langfuse v4: use propagate_attributes context manager so all nested
+    # @observe calls (tool_execution, llm_stream, llm_generate) inherit
+    # session_id and user_id on their trace.
+    _attr_ctx = propagate_attributes(**propagate_kwargs) if propagate_kwargs else nullcontext()
+    with _attr_ctx:
+        try:
+            for iteration in range(MAX_ITERATIONS + 1):
+                messages = _build_agent_messages(query, history, scratchpad)
 
-            if not scratchpad:
-                # --- First LLM call: prefix-buffer to detect tool calls ---
-                yield {"type": "status", "message": "Đang phân tích câu hỏi..."}
+                if not scratchpad:
+                    # --- First LLM call: prefix-buffer to detect tool calls ---
+                    yield {"type": "status", "message": "Đang phân tích câu hỏi..."}
 
-                prefix = ""
-                prefix_done = False
-                is_tool = False
-                buffer = []  # text strings (not AIMessageChunk)
+                    prefix = ""
+                    prefix_done = False
+                    is_tool = False
+                    buffer = []  # text strings (not AIMessageChunk)
 
-                with Timer("LLM streaming call (1st)"):
-                    for ai_chunk in llm.stream(messages):
-                        text = ai_chunk.content
-                        if not text:
-                            continue
+                    with Timer("LLM streaming call (1st)"):
+                        for ai_chunk in llm.stream(messages):
+                            text = ai_chunk.content
+                            if not text:
+                                continue
 
-                        if not prefix_done:
-                            prefix += text
-                            buffer.append(text)
+                            if not prefix_done:
+                                prefix += text
+                                buffer.append(text)
 
-                            if any(tag in prefix for tag in TOOL_CALL_PREFIXES):
-                                is_tool = True
-                                prefix_done = True
-                            elif len(prefix) >= PREFIX_BUFFER_SIZE:
-                                prefix_done = True
-                                for buf_text in buffer:
-                                    yield {"type": "chunk", "text": buf_text}
-                                buffer = None
-                        elif is_tool:
-                            buffer.append(text)
+                                if any(tag in prefix for tag in TOOL_CALL_PREFIXES):
+                                    is_tool = True
+                                    prefix_done = True
+                                elif len(prefix) >= PREFIX_BUFFER_SIZE:
+                                    prefix_done = True
+                                    for buf_text in buffer:
+                                        yield {"type": "chunk", "text": buf_text}
+                                    buffer = None
+                            elif is_tool:
+                                buffer.append(text)
+                            else:
+                                yield {"type": "chunk", "text": text}
+
+                    # Handle end-of-stream for first call
+                    if is_tool:
+                        full_text = "".join(buffer)
+                        tool_call = parse_tool_call(full_text)
+                        if tool_call:
+                            tool_name = tool_call.get("tool", "")
+                            tool_args = tool_call.get("args", {})
+                            logger.info(f"Agent wants tool: {tool_name}({tool_args})")
+
+                            yield {"type": "status", "message": _tool_status_message(tool_name, tool_args)}
+
+                            scratchpad += (
+                                f"\n--- Agent goi tool ---\n"
+                                f"Tool: {tool_name}\n"
+                                f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
+                            )
+                            result_text, issues_found = _execute_tool_sync(tool_call)
+                            if issues_found:
+                                all_issues = issues_found
+                            scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
+                            continue  # → next iteration (stream final answer)
                         else:
-                            yield {"type": "chunk", "text": text}
-
-                # Handle end-of-stream for first call
-                if is_tool:
-                    full_text = "".join(buffer)
-                    tool_call = parse_tool_call(full_text)
-                    if tool_call:
-                        tool_name = tool_call.get("tool", "")
-                        tool_args = tool_call.get("args", {})
-                        logger.info(f"Agent wants tool: {tool_name}({tool_args})")
-
-                        yield {"type": "status", "message": _tool_status_message(tool_name, tool_args)}
-
-                        scratchpad += (
-                            f"\n--- Agent goi tool ---\n"
-                            f"Tool: {tool_name}\n"
-                            f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
-                        )
-                        result_text, issues_found = _execute_tool_sync(tool_call)
-                        if issues_found:
-                            all_issues = issues_found
-                        scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
-                        continue  # → next iteration (stream final answer)
-                    else:
-                        # Tool prefix detected but JSON parse failed — yield as text
-                        logger.warning("Tool prefix detected but JSON parse failed, yielding as text")
+                            # Tool prefix detected but JSON parse failed — yield as text
+                            logger.warning("Tool prefix detected but JSON parse failed, yielding as text")
+                            for buf_text in buffer:
+                                yield {"type": "chunk", "text": buf_text}
+                    elif buffer:
+                        # Very short response (< PREFIX_BUFFER_SIZE), not flushed yet
                         for buf_text in buffer:
                             yield {"type": "chunk", "text": buf_text}
-                elif buffer:
-                    # Very short response (< PREFIX_BUFFER_SIZE), not flushed yet
-                    for buf_text in buffer:
-                        yield {"type": "chunk", "text": buf_text}
 
-                # Direct answer (or parse failure) — done
-                if result is not None:
-                    result.issues = all_issues
-                return
+                    # Direct answer (or parse failure) — done
+                    if result is not None:
+                        result.issues = all_issues
+                    return
 
-            else:
-                # --- After tools: stream directly (no tool-call re-check) ---
-                yield {"type": "status", "message": "Đang viết câu trả lời..."}
+                else:
+                    # --- After tools: stream directly (no tool-call re-check) ---
+                    yield {"type": "status", "message": "Đang viết câu trả lời..."}
 
-                with Timer("LLM streaming call (final)"):
-                    for ai_chunk in llm.stream(messages):
-                        text = ai_chunk.content
-                        if text:
-                            yield {"type": "chunk", "text": text}
+                    with Timer("LLM streaming call (final)"):
+                        for ai_chunk in llm.stream(messages):
+                            text = ai_chunk.content
+                            if text:
+                                yield {"type": "chunk", "text": text}
 
-                if result is not None:
-                    result.issues = all_issues
-                return
+                    if result is not None:
+                        result.issues = all_issues
+                    return
 
-        # Exhausted iterations
-        if result is not None:
-            result.issues = all_issues
+            # Exhausted iterations
+            if result is not None:
+                result.issues = all_issues
 
-    except Exception as e:
-        logger.error(f"Streaming error: {e}")
-        if result is not None:
-            result.error = str(e)
+        except Exception as e:
+            logger.error(f"Streaming error: {e}")
+            if result is not None:
+                result.error = str(e)
