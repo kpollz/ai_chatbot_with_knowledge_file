@@ -14,5 +14,5 @@ python-dotenv
 pydantic
 streamlit
 
-# Langfuse Tracing
-langfuse>=2.0.0
+# Langfuse Tracing (v4)
+langfuse>=4.0.0

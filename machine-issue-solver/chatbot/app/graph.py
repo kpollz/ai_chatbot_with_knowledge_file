@@ -15,8 +15,7 @@ import json
 import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langfuse.decorators import observe, langfuse_context
-
+from langfuse import observe
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
 from api_client import search_issues_sync
@@ -132,7 +131,7 @@ def _build_agent_messages(query: str, history: List[Dict[str, str]],
     return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_prompt)]
 
 
-@observe(name="tool_execution", as_type="span")
+@observe(name="tool_execution")
 def _execute_tool_sync(tool_call: Dict) -> tuple:
     """Execute a tool call synchronously. Returns (result_text, issues_found)."""
     tool_name = tool_call.get("tool", "")
@@ -215,14 +214,12 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
         → No tool: flush buffer, stream remaining chunks
     """
     logger.info(f"Processing query (streaming): {query}")
-    
-    # Configure the current trace
-    langfuse_context.update_current_trace(
-        session_id=session_id,
-        user_id=user_id,
-        metadata={"query": query, "history_length": len(history) if history else 0}
-    )
     history = history or []
+    
+    # Note: In Langfuse v4, to set session_id and user_id, use propagate_attributes()
+    # context manager around the code that creates observations.
+    # Example: with propagate_attributes(session_id=..., user_id=...): ...
+    # For now, we skip setting these optional trace attributes to keep the code simple.
     scratchpad = ""
     all_issues = []
 

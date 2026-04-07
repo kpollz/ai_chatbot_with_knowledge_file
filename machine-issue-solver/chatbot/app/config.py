@@ -21,6 +21,11 @@ COMPANY_LLM_MODEL_ID = os.getenv("COMPANY_LLM_MODEL_ID")
 COMPANY_LLM_MODEL_URL = os.getenv("COMPANY_LLM_MODEL_URL")
 
 # Langfuse Configuration (optional - for tracing)
+# Note: For langfuse v4, these env vars are read automatically by the SDK:
+# - LANGFUSE_PUBLIC_KEY (or LANGFUSE_PK)
+# - LANGFUSE_SECRET_KEY (or LANGFUSE_SK)  
+# - LANGFUSE_HOST
+# We keep them here for reference and backward compatibility
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
