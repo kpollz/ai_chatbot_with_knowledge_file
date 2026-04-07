@@ -99,15 +99,15 @@ def clean_response(text: str) -> str:
 def format_issues_for_scratchpad(issues: List[Dict]) -> str:
     """Format issue list as readable text for the agent scratchpad."""
     if not issues:
-        return "Khong tim thay van de nao."
+        return "Không tìm thấy vấn đề nào."
 
-    lines = [f"Tim thay {len(issues)} van de:\n"]
+    lines = [f"Tìm thấy {len(issues)} vấn đề:\n"]
     for i, issue in enumerate(issues, 1):
-        lines.append(f"Van de {i}:")
-        lines.append(f"  Ngay: {issue.get('Date', 'N/A')}")
-        lines.append(f"  Hien tuong (Symptom): {issue.get('hien_tuong', 'N/A')}")
-        lines.append(f"  Nguyen nhan (Cause): {issue.get('nguyen_nhan', 'N/A')}")
-        lines.append(f"  Khac phuc (Solution): {issue.get('khac_phuc', 'N/A')}")
+        lines.append(f"Vấn đề {i}:")
+        lines.append(f"  ID: {issue.get('IssueID', 'N/A')}")
+        lines.append(f"  Hiện tượng (Symptom): {issue.get('hien_tuong', 'N/A')}")
+        lines.append(f"  Nguyên Nhân (Cause): {issue.get('nguyen_nhan', 'N/A')}")
+        lines.append(f"  Khắc phục (Solution): {issue.get('khac_phuc', 'N/A')}")
         lines.append(f"  PIC: {issue.get('PIC', 'N/A')}")
         lines.append("")
     return "\n".join(lines)
@@ -120,12 +120,12 @@ def _build_agent_messages(query: str, history: List[Dict[str, str]],
     history_text = format_history_for_prompt(history)
     if history_text:
         parts.append(history_text)
-    parts.append(f"Cau hoi hien tai cua nguoi dung: {query}")
+    parts.append(f"Câu hỏi hiện tại của người dùng: {query}")
     if scratchpad:
         parts.append(
             f"\n{scratchpad}\n"
-            "Dua tren ket qua tool o tren, hay tra loi nguoi dung chi tiet va huu ich. "
-            "KHONG goi them tool neu khong can thiet."
+            "Dựa trên kết quả tool ở trên, hãy trả lời người dùng chi tiết và hữu ích. "
+            "KHÔNG gọi thêm tool nếu không cần thiết."
         )
     user_prompt = "\n\n".join(parts)
     return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_prompt)]
@@ -148,20 +148,20 @@ def _execute_tool_sync(tool_call: Dict) -> tuple:
                 issues = search_issues_sync(machine_name, line_name, location=location, serial=serial)
             issues_found = issues
             if not issues:
-                desc = f"may '{machine_name}' tren line '{line_name}'"
+                desc = f"Máy '{machine_name}' trên line '{line_name}'"
                 if location:
-                    desc += f" tai vi tri '{location}'"
+                    desc += f" tại Location '{location}'"
                 if serial:
-                    desc += f" voi serial '{serial}'"
-                result_text = f"Khong tim thay van de nao cho {desc}."
+                    desc += f" với Serial '{serial}'"
+                result_text = f"Không tìm thấy vấn đề nào cho {desc}."
             else:
                 result_text = format_issues_for_scratchpad(issues)
         else:
-            result_text = f"Tool '{tool_name}' khong duoc ho tro."
+            result_text = f"Tool '{tool_name}' không được hỗ trợ."
 
     except Exception as e:
         logger.error(f"Tool execution error: {e}")
-        result_text = f"Loi khi goi tool '{tool_name}': {e}"
+        result_text = f"Lỗi khi gọi tool '{tool_name}': {e}"
 
     return result_text, issues_found
 
@@ -175,9 +175,9 @@ def _tool_status_message(tool_name: str, tool_args: Dict) -> str:
         serial = tool_args.get("serial")
         msg = f"Đang tìm kiếm vấn đề: {machine} trên {line}"
         if location:
-            msg += f", vị trí {location}"
+            msg += f", Location {location}"
         if serial:
-            msg += f", serial {serial}"
+            msg += f", Serial {serial}"
         msg += "..."
         return msg
     return f"Đang thực hiện: {tool_name}..."
