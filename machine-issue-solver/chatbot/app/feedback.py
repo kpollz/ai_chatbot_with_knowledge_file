@@ -149,19 +149,32 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
         unsafe_allow_html=True,
     )
 
-    # 10 clickable ball buttons in a row
-    balls = st.columns(10)
-    for i, col in enumerate(balls):
-        score_val = i + 1
-        with col:
-            if st.button(
-                f"⚪ {score_val}",
-                key=f"fb_ball_{msg_index}_{score_val}",
-                help=f"Đánh giá {score_val}/10",
-            ):
-                st.session_state[f"fb_dialog_score_{msg_index}"] = score_val
-                st.session_state[f"fb_dialog_open_{msg_index}"] = True
-                st.rerun()
+    # 10 compact buttons aligned left
+    st.markdown(
+        """<style>
+        div[data-testid="stHorizontalBlock"] > div:has(button[id*="fb_ball_"]) button {
+            font-size: 0.65rem !important;
+            padding: 0.15rem 0.4rem !important;
+            min-width: 1.8rem !important;
+            line-height: 1.2 !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    left_side, _ = st.columns([4, 6])
+    with left_side:
+        btn_cols = st.columns(10)
+        for i, col in enumerate(btn_cols):
+            score_val = i + 1
+            with col:
+                if st.button(
+                    str(score_val),
+                    key=f"fb_ball_{msg_index}_{score_val}",
+                    help=f"Đánh giá {score_val}/10",
+                ):
+                    st.session_state[f"fb_dialog_score_{msg_index}"] = score_val
+                    st.session_state[f"fb_dialog_open_{msg_index}"] = True
+                    st.rerun()
 
     # Open dialog if a ball was clicked
     if st.session_state.get(f"fb_dialog_open_{msg_index}", False):
