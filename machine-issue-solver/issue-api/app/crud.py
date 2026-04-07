@@ -360,13 +360,16 @@ async def import_issue(
         return existing_issue, team, line, machine, created_team, created_line, created_machine, is_duplicate
 
     # 5. Create Issue
-    # Convert date string to date object if provided
+    # Convert date string to date object if provided (try multiple formats)
     date_obj = None
     if data.date:
-        try:
-            date_obj = datetime.strptime(data.date, "%Y-%m-%d").date()
-        except ValueError:
-            pass
+        date_formats = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S"]
+        for fmt in date_formats:
+            try:
+                date_obj = datetime.strptime(data.date, fmt).date()
+                break
+            except ValueError:
+                continue
     
     issue_data = {
         "machine_id": machine.id,

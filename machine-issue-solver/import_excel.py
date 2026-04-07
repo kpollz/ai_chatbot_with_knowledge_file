@@ -53,6 +53,9 @@ COLUMN_MAP = {
 # Fields that should be converted to int
 INT_FIELDS = {"Week", "Year"}
 
+# Fields that should be formatted as ISO date
+DATE_FIELDS = {"Date"}
+
 # Fields that are required (must have a non-empty value)
 REQUIRED_FIELDS = ["LineName", "TeamName", "MachineName"]
 
@@ -81,6 +84,20 @@ def parse_row(row) -> dict:
                 value = int(float(value))
             except (ValueError, TypeError):
                 print(f"  ⚠ Cannot convert '{value}' to int for field '{api_field}', skipping")
+                continue
+
+        # Convert date fields to ISO format (YYYY-MM-DD)
+        if api_field in DATE_FIELDS:
+            try:
+                # Handle datetime/date objects from Excel
+                from datetime import datetime, date
+                if isinstance(cell_value, datetime):
+                    value = cell_value.strftime("%Y-%m-%d")
+                elif isinstance(cell_value, date):
+                    value = cell_value.strftime("%Y-%m-%d")
+                # If already a string, keep as is (API will try multiple formats)
+            except Exception as e:
+                print(f"  ⚠ Cannot convert date for field '{api_field}': {e}, skipping")
                 continue
 
         data[api_field] = value
