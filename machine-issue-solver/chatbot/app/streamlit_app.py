@@ -188,7 +188,9 @@ if st.session_state.processing and st.session_state.pending_query:
             if stream_result.error:
                 st.error(f"❌ {stream_result.error}")
                 response = response or f"Error: {stream_result.error}"
-            issues_found = stream_result.issues
+            # issues_found already updated from events, fallback to stream_result if empty
+            if not issues_found:
+                issues_found = stream_result.issues
 
             # Show issues if found
             if issues_found:
