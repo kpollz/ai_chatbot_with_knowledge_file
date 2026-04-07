@@ -122,42 +122,51 @@ def _feedback_dialog(score: int, trace_id: str, msg_index: int):
 
 
 def render_feedback_widget(msg_index: int, trace_id: str = None):
-    """Render the feedback rating widget below an assistant message."""
+    """Render a subtle feedback widget: divider + faint prompt + 10 clickable balls."""
     already_submitted = st.session_state.get(f"fb_submitted_{msg_index}", False)
     submitted_score = st.session_state.get(f"fb_score_{msg_index}", None)
 
-    if already_submitted:
+    if already_submitted and submitted_score:
         emoji = "😊" if submitted_score >= 9 else "🙂" if submitted_score >= 7 else "😐" if submitted_score >= 4 else "😞"
-        st.markdown(f"{emoji} Đã đánh giá: **{submitted_score}/10**")
+        st.markdown(
+            f'<div style="border-top: 1px solid rgba(128,128,128,0.2); '
+            f'margin-top: 0.5rem; padding-top: 0.4rem;">'
+            f'<span style="color: gray; font-size: 0.8em;">{emoji} Đã đánh giá: {submitted_score}/10</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
         return
 
-    # Rating slider + submit button
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        score = st.select_slider(
-            "⭐ Đánh giá",
-            options=list(range(1, 11)),
-            value=5,
-            key=f"fb_rating_{msg_index}",
-            label_visibility="collapsed",
-        )
-    with col2:
-        if st.button("📝 Gửi", key=f"fb_btn_{msg_index}", type="primary"):
-            st.session_state[f"fb_dialog_score_{msg_index}"] = score
-            st.session_state[f"fb_dialog_open_{msg_index}"] = True
+    # Subtle divider
+    st.markdown(
+        '<div style="border-top: 1px solid rgba(128,128,128,0.2); margin-top: 0.5rem;"></div>',
+        unsafe_allow_html=True,
+    )
+    # Faint prompt text
+    st.markdown(
+        '<p style="color: rgba(128,128,128,0.6); font-size: 0.8em; margin: 0.2rem 0 0.3rem 0;">'
+        'Hãy để lại feedback của bạn</p>',
+        unsafe_allow_html=True,
+    )
 
-    score_labels = {
-        1: "😞 Rất tệ", 2: "😞 Tệ", 3: "😞 Tệ",
-        4: "😐 Dưới TB", 5: "😐 TB", 6: "😐 Trên TB",
-        7: "🙂 Tốt", 8: "🙂 Rất tốt",
-        9: "😊 Tuyệt vời", 10: "😊 Hoàn hảo"
-    }
-    st.caption(f"Đã chọn: {score}/10 — {score_labels.get(score, '')}")
+    # 10 clickable ball buttons in a row
+    balls = st.columns(10)
+    for i, col in enumerate(balls):
+        score_val = i + 1
+        with col:
+            if st.button(
+                f"⚪ {score_val}",
+                key=f"fb_ball_{msg_index}_{score_val}",
+                help=f"Đánh giá {score_val}/10",
+            ):
+                st.session_state[f"fb_dialog_score_{msg_index}"] = score_val
+                st.session_state[f"fb_dialog_open_{msg_index}"] = True
+                st.rerun()
 
-    # Open dialog if button was clicked
+    # Open dialog if a ball was clicked
     if st.session_state.get(f"fb_dialog_open_{msg_index}", False):
         st.session_state[f"fb_dialog_open_{msg_index}"] = False
-        dialog_score = st.session_state.get(f"fb_dialog_score_{msg_index}", score)
+        dialog_score = st.session_state.get(f"fb_dialog_score_{msg_index}", 5)
         _feedback_dialog(
             score=dialog_score,
             trace_id=trace_id or "",
