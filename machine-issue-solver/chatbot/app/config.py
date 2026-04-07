@@ -20,6 +20,11 @@ COMPANY_LLM_API_KEY = os.getenv("COMPANY_LLM_API_KEY", "")
 COMPANY_LLM_MODEL_ID = os.getenv("COMPANY_LLM_MODEL_ID")
 COMPANY_LLM_MODEL_URL = os.getenv("COMPANY_LLM_MODEL_URL")
 
+# Langfuse Configuration (optional - for tracing)
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
 # Context Window
 CONTEXT_WINDOW_LIMIT = int(os.getenv("CONTEXT_WINDOW_LIMIT", "128000"))
 CONTEXT_WARN_THRESHOLD = int(os.getenv("CONTEXT_WARN_THRESHOLD", "100000"))

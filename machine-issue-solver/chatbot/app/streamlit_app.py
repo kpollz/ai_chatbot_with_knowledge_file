@@ -178,7 +178,9 @@ if st.session_state.processing and st.session_state.pending_query:
             streaming_started = False
 
             for event in solve_issue_stream(prompt, history=history,
-                                            api_key=api_key, result=stream_result):
+                                            api_key=api_key, result=stream_result,
+                                            session_id=session_id,
+                                            user_id="anonymous"):
                 if event["type"] == "status":
                     status_area.markdown(f"⏳ *{event['message']}*")
                 elif event["type"] == "chunk":

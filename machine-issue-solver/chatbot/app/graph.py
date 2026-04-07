@@ -15,6 +15,7 @@ import json
 import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
+from langfuse.decorators import observe, langfuse_context
 
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
@@ -131,6 +132,7 @@ def _build_agent_messages(query: str, history: List[Dict[str, str]],
     return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_prompt)]
 
 
+@observe(name="tool_execution", as_type="span")
 def _execute_tool_sync(tool_call: Dict) -> tuple:
     """Execute a tool call synchronously. Returns (result_text, issues_found)."""
     tool_name = tool_call.get("tool", "")
@@ -194,10 +196,14 @@ class StreamResult:
         self.error: Optional[str] = None
 
 
+@observe(name="agent_solve_issue")
 def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
-                       api_key: str = "", result: Optional[StreamResult] = None):
+                       api_key: str = "", result: Optional[StreamResult] = None,
+                       session_id: str = None, user_id: str = None):
     """
     Streaming generator yielding event dicts for Streamlit rendering.
+    
+    Creates ONE Langfuse Trace per query with nested spans.
 
     Event types:
       {"type": "status", "message": "..."}  — progress indicator for UI
@@ -209,6 +215,13 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
         → No tool: flush buffer, stream remaining chunks
     """
     logger.info(f"Processing query (streaming): {query}")
+    
+    # Configure the current trace
+    langfuse_context.update_current_trace(
+        session_id=session_id,
+        user_id=user_id,
+        metadata={"query": query, "history_length": len(history) if history else 0}
+    )
     history = history or []
     scratchpad = ""
     all_issues = []

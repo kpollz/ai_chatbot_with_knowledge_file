@@ -13,3 +13,6 @@ requests
 python-dotenv
 pydantic
 streamlit
+
+# Langfuse Tracing
+langfuse>=2.0.0

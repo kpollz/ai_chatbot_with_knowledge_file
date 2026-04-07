@@ -19,6 +19,7 @@ import requests as req_lib
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage, AIMessageChunk, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGeneration, ChatGenerationChunk
+from langfuse.decorators import observe, langfuse_context
 from pydantic import Field
 
 from config import COMPANY_MODELS, COMPANY_LLM_API_KEY, COMPANY_LLM_MODEL_ID, COMPANY_LLM_MODEL_URL
@@ -106,6 +107,7 @@ class ChatCompanyLLM(BaseChatModel):
 
     # ---- Streaming (LangChain standard interface) ----
 
+    @observe(name="llm_stream", as_type="generation")
     def _stream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                 run_manager: Optional[Any] = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
         """
@@ -120,8 +122,17 @@ class ChatCompanyLLM(BaseChatModel):
         params = {'stream': 'true'}
         json_data = self._build_request_body(user_prompt, system_prompt, stream=True)
 
+        # Capture LLM call details for Langfuse
+        langfuse_context.update_current_observation(
+            input=user_prompt,
+            model=self.model,
+            metadata={"temperature": self.temperature, "top_p": self.top_p, "stream": True}
+        )
+
         start_time = time.time()
         logger.info(f"Calling Company LLM (streaming): {self.model}")
+
+        full_output = []
 
         with req_lib.post(
             model_config["model-url"],
@@ -138,6 +149,7 @@ class ChatCompanyLLM(BaseChatModel):
                     if decoded_line.get("event") == "token":
                         chunk_text = decoded_line["data"]["chunk"]
                         if chunk_text:
+                            full_output.append(chunk_text)
                             chunk = ChatGenerationChunk(
                                 message=AIMessageChunk(content=chunk_text)
                             )
@@ -147,10 +159,13 @@ class ChatCompanyLLM(BaseChatModel):
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.warning(f"Skipping malformed streaming line: {e}")
 
+        # Update Langfuse with complete output
+        langfuse_context.update_current_observation(output="".join(full_output))
         logger.info(f"Streaming completed in {time.time() - start_time:.2f}s")
 
     # ---- Sync (LangChain interface) ----
 
+    @observe(name="llm_generate", as_type="generation")
     def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                   run_manager: Optional[Any] = None, **kwargs: Any) -> ChatResult:
         user_prompt, system_prompt = self._parse_messages(messages)
@@ -158,6 +173,13 @@ class ChatCompanyLLM(BaseChatModel):
         headers = {'Content-Type': 'application/json', 'x-api-key': self.api_key}
         params = {'stream': 'false'}
         json_data = self._build_request_body(user_prompt, system_prompt)
+
+        # Capture LLM call details for Langfuse
+        langfuse_context.update_current_observation(
+            input=user_prompt,
+            model=self.model,
+            metadata={"temperature": self.temperature, "top_p": self.top_p, "stream": False}
+        )
 
         start_time = time.time()
         logger.info(f"Calling Company LLM (sync): {self.model}")
@@ -171,6 +193,9 @@ class ChatCompanyLLM(BaseChatModel):
 
         text = self._parse_response(response.json())
         logger.info(f"LLM response received in {time.time() - start_time:.2f}s")
+
+        # Update Langfuse with output
+        langfuse_context.update_current_observation(output=text)
 
         message = AIMessage(content=text)
         return ChatResult(generations=[ChatGeneration(message=message)])
