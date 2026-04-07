@@ -1,19 +1,18 @@
 """Logger utility for Chatbot"""
 
 import logging
+import os
 import time
 from contextlib import contextmanager
 
-import os
-
-_log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+_log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(
-    level=getattr(logging, _log_level, logging.INFO),
+    level=_log_level,
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("chatbot")
-logger.setLevel(getattr(logging, _log_level, logging.INFO))
+logger.setLevel(_log_level)
 
 
 @contextmanager

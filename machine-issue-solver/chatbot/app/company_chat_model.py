@@ -128,26 +128,19 @@ class ChatCompanyLLM(BaseChatModel):
 
         start_time = time.time()
         logger.info(f"Calling Company LLM (streaming): {self.model}")
-        logger.debug(f"[DEBUG-LLM] URL: {model_config['model-url']}")
-        logger.debug(f"[DEBUG-LLM] Headers: Content-Type={headers.get('Content-Type')}, x-api-key={'***' + self.api_key[-4:] if len(self.api_key) > 4 else 'EMPTY'}")
-        logger.debug(f"[DEBUG-LLM] Timeout: {self.timeout}s, Max retries: {self.max_retries}")
 
         last_error = None
         for attempt in range(self.max_retries + 1):
             chunks_yielded = False
             try:
-                logger.debug(f"[DEBUG-LLM] Attempt {attempt + 1}/{self.max_retries + 1} — opening connection...")
-                
                 resp = req_lib.post(
                     model_config["model-url"],
                     params=params, headers=headers, json=json_data,
                     stream=True, verify=False, proxies={"https": None},
                     timeout=self.timeout,
                 )
-                
-                logger.debug(f"[DEBUG-LLM] Response status: {resp.status_code}, headers: {dict(resp.headers)}")
                 resp.raise_for_status()
-                
+
                 line_count = 0
                 for line in resp.iter_lines():
                     if not line:
@@ -166,30 +159,30 @@ class ChatCompanyLLM(BaseChatModel):
                                     run_manager.on_llm_new_token(chunk_text, chunk=chunk)
                                 yield chunk
                         elif decoded_line.get("event") == "error":
-                            logger.error(f"[DEBUG-LLM] Server sent error event: {decoded_line}")
+                            logger.error(f"LLM server error event: {decoded_line}")
                     except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"[DEBUG-LLM] Skipping malformed line #{line_count}: {e}")
+                        logger.warning(f"Skipping malformed streaming line: {e}")
 
-                logger.info(f"[DEBUG-LLM] Streaming completed in {time.time() - start_time:.2f}s, {line_count} lines received")
+                logger.info(f"Streaming completed in {time.time() - start_time:.2f}s, {line_count} lines")
                 resp.close()
                 return  # Success
 
             except (req_lib.exceptions.ConnectionError, ConnectionResetError) as e:
                 last_error = e
-                logger.error(f"[DEBUG-LLM] ConnectionError on attempt {attempt + 1}: {type(e).__name__}: {e}")
+                logger.warning(f"LLM connection error (attempt {attempt + 1}/{self.max_retries + 1}): {e}")
                 # Only retry if no chunks have been yielded yet
                 if not chunks_yielded and attempt < self.max_retries:
                     wait_time = 2 ** attempt
-                    logger.warning(f"[DEBUG-LLM] Retrying in {wait_time}s...")
+                    logger.info(f"Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    logger.error(f"[DEBUG-LLM] Giving up. chunks_yielded={chunks_yielded}, attempt={attempt + 1}")
+                    logger.error(f"LLM connection failed after {attempt + 1} attempts")
                     raise
             except req_lib.exceptions.HTTPError as e:
-                logger.error(f"[DEBUG-LLM] HTTPError: {e.response.status_code} — {e.response.text[:500]}")
+                logger.error(f"LLM HTTP error {e.response.status_code}: {e.response.text[:500]}")
                 raise
             except Exception as e:
-                logger.error(f"[DEBUG-LLM] Unexpected error: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(f"LLM streaming error: {type(e).__name__}: {e}", exc_info=True)
                 raise
 
         # All retries exhausted

@@ -37,32 +37,11 @@ Setting Trace Attributes (session_id, user_id):
         return result
 """
 
-import os
-import sys
-
-# Debug: Track Langfuse initialization
-_debug_enabled = os.environ.get("LANGFUSE_DEBUG", "false").lower() in ("true", "1")
-
-if _debug_enabled:
-    print(f"[LANGFUSE-DEBUG] Initializing langfuse_setup module...")
-    print(f"[LANGFUSE-DEBUG] LANGFUSE_PUBLIC_KEY set: {bool(os.environ.get('LANGFUSE_PUBLIC_KEY'))}")
-    print(f"[LANGFUSE-DEBUG] LANGFUSE_SECRET_KEY set: {bool(os.environ.get('LANGFUSE_SECRET_KEY'))}")
-    print(f"[LANGFUSE-DEBUG] LANGFUSE_HOST: {os.environ.get('LANGFUSE_HOST', 'NOT SET')}")
-
 from langfuse import (
     observe,
     get_client,
     propagate_attributes,
 )
-
-if _debug_enabled:
-    print(f"[LANGFUSE-DEBUG] Langfuse imported successfully")
-    try:
-        _test_client = get_client()
-        print(f"[LANGFUSE-DEBUG] get_client() returned: {_test_client}")
-        print(f"[LANGFUSE-DEBUG] Client type: {type(_test_client)}")
-    except Exception as e:
-        print(f"[LANGFUSE-DEBUG] get_client() FAILED: {type(e).__name__}: {e}")
 
 # Flag to track if Langfuse is available and working
 _langfuse_available: bool | None = None

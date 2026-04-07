@@ -218,7 +218,6 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
         → No tool: flush buffer, stream remaining chunks
     """
     logger.info(f"Processing query (streaming): {query}")
-    logger.debug(f"[DEBUG-AGENT] session_id={session_id}, user_id={user_id}")
     history = history or []
     
     # Langfuse v4: propagate session_id and user_id to all nested observations
@@ -228,37 +227,21 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     if user_id:
         propagate_kwargs["user_id"] = user_id
     
-    logger.debug(f"[DEBUG-AGENT] propagate_kwargs={propagate_kwargs}")
-    
     scratchpad = ""
     all_issues = []
 
-    logger.debug(f"[DEBUG-AGENT] Creating LLM instance: model={LLM_MODEL}, temp={LLM_TEMPERATURE}")
     llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
-    logger.debug(f"[DEBUG-AGENT] LLM instance created: {llm._llm_type}")
 
     # Langfuse v4: use propagate_attributes context manager so all nested
-    # @observe calls (tool_execution, llm_stream, llm_generate) inherit
+    # @observe calls (tool_execution, llm_generate) inherit
     # session_id and user_id on their trace.
-    # Wrap in try/except so Langfuse connection errors don't crash the agent.
-    _use_propagate = bool(propagate_kwargs)
-    logger.debug(f"[DEBUG-AGENT] Will use propagate_attributes: {_use_propagate}")
-    
     try:
-        if _use_propagate:
-            logger.debug("[DEBUG-AGENT] Calling propagate_attributes()...")
-            _attr_ctx = propagate_attributes(**propagate_kwargs)
-            logger.debug(f"[DEBUG-AGENT] propagate_attributes() returned: {_attr_ctx}")
-        else:
-            _attr_ctx = nullcontext()
-            logger.debug("[DEBUG-AGENT] No propagate_kwargs, using nullcontext")
+        _attr_ctx = propagate_attributes(**propagate_kwargs) if propagate_kwargs else nullcontext()
     except Exception as lf_err:
-        logger.warning(f"[DEBUG-AGENT] propagate_attributes FAILED: {type(lf_err).__name__}: {lf_err}", exc_info=True)
+        logger.debug(f"Langfuse propagate_attributes skipped: {lf_err}")
         _attr_ctx = nullcontext()
     
-    logger.debug(f"[DEBUG-AGENT] Entering context manager: {type(_attr_ctx).__name__}")
     with _attr_ctx:
-        logger.debug("[DEBUG-AGENT] Inside context manager, starting agent loop")
         try:
             for iteration in range(MAX_ITERATIONS + 1):
                 messages = _build_agent_messages(query, history, scratchpad)
