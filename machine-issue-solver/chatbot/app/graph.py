@@ -202,6 +202,7 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     Event types:
       {"type": "status", "message": "..."}  — progress indicator for UI
       {"type": "chunk",  "text": "..."}     — text chunk to append to response
+      {"type": "issues", "issues": [...]}   — issues found from tool execution
 
     Flow:
       1st LLM call: prefix-buffer (~20 chars) to detect <tool_call>
@@ -270,6 +271,8 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                         result_text, issues_found = _execute_tool_sync(tool_call)
                         if issues_found:
                             all_issues = issues_found
+                            # Yield issues for UI to display
+                            yield {"type": "issues", "issues": issues_found}
                         scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
                         continue  # → next iteration (stream final answer)
                     else:

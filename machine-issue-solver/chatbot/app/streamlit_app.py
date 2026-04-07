@@ -176,6 +176,8 @@ if st.session_state.processing and st.session_state.pending_query:
                         streaming_started = True
                     full_response += event["text"]
                     response_area.markdown(full_response + "▌")
+                elif event["type"] == "issues":
+                    issues_found = event.get("issues", [])
 
             # Finalize: remove cursor, clear leftover status
             status_area.empty()
