@@ -107,7 +107,6 @@ class ChatCompanyLLM(BaseChatModel):
 
     # ---- Streaming (LangChain standard interface) ----
 
-    @observe(name="llm_stream", as_type="generation")
     def _stream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None,
                 run_manager: Optional[Any] = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
         """
@@ -116,8 +115,10 @@ class ChatCompanyLLM(BaseChatModel):
         This makes llm.stream(messages) work, which yields AIMessageChunk.
         Streamlit's st.write_stream() natively handles AIMessageChunk.
         
-        Langfuse v4: @observe with as_type="generation" auto-captures inputs/outputs.
-        Use get_client().update_current_generation() for metadata/model info.
+        Note: @observe is NOT used here because this is a generator function.
+        Langfuse v4's @observe decorator may not handle generators correctly
+        (it could consume the generator or interfere with streaming).
+        Instead, we manually trace via the parent @observe in graph.py.
         """
         user_prompt, system_prompt = self._parse_messages(messages)
         model_config = self._get_model_config()
@@ -125,44 +126,74 @@ class ChatCompanyLLM(BaseChatModel):
         params = {'stream': 'true'}
         json_data = self._build_request_body(user_prompt, system_prompt, stream=True)
 
-        # Update current generation with model info (Langfuse v4 pattern)
-        client = get_client()
-        client.update_current_generation(
-            model=self.model,
-            metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "true"}
-        )
-
         start_time = time.time()
         logger.info(f"Calling Company LLM (streaming): {self.model}")
+        logger.debug(f"[DEBUG-LLM] URL: {model_config['model-url']}")
+        logger.debug(f"[DEBUG-LLM] Headers: Content-Type={headers.get('Content-Type')}, x-api-key={'***' + self.api_key[-4:] if len(self.api_key) > 4 else 'EMPTY'}")
+        logger.debug(f"[DEBUG-LLM] Timeout: {self.timeout}s, Max retries: {self.max_retries}")
 
-        full_output = []
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            chunks_yielded = False
+            try:
+                logger.debug(f"[DEBUG-LLM] Attempt {attempt + 1}/{self.max_retries + 1} — opening connection...")
+                
+                resp = req_lib.post(
+                    model_config["model-url"],
+                    params=params, headers=headers, json=json_data,
+                    stream=True, verify=False, proxies={"https": None},
+                    timeout=self.timeout,
+                )
+                
+                logger.debug(f"[DEBUG-LLM] Response status: {resp.status_code}, headers: {dict(resp.headers)}")
+                resp.raise_for_status()
+                
+                line_count = 0
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    line_count += 1
+                    try:
+                        decoded_line = json.loads(line.decode("utf-8"))
+                        if decoded_line.get("event") == "token":
+                            chunk_text = decoded_line["data"]["chunk"]
+                            if chunk_text:
+                                chunks_yielded = True
+                                chunk = ChatGenerationChunk(
+                                    message=AIMessageChunk(content=chunk_text)
+                                )
+                                if run_manager:
+                                    run_manager.on_llm_new_token(chunk_text, chunk=chunk)
+                                yield chunk
+                        elif decoded_line.get("event") == "error":
+                            logger.error(f"[DEBUG-LLM] Server sent error event: {decoded_line}")
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"[DEBUG-LLM] Skipping malformed line #{line_count}: {e}")
 
-        with req_lib.post(
-            model_config["model-url"],
-            params=params, headers=headers, json=json_data,
-            stream=True, verify=False, proxies={"https": None},
-            timeout=self.timeout,
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                try:
-                    decoded_line = json.loads(line.decode("utf-8"))
-                    if decoded_line.get("event") == "token":
-                        chunk_text = decoded_line["data"]["chunk"]
-                        if chunk_text:
-                            full_output.append(chunk_text)
-                            chunk = ChatGenerationChunk(
-                                message=AIMessageChunk(content=chunk_text)
-                            )
-                            if run_manager:
-                                run_manager.on_llm_new_token(chunk_text, chunk=chunk)
-                            yield chunk
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Skipping malformed streaming line: {e}")
+                logger.info(f"[DEBUG-LLM] Streaming completed in {time.time() - start_time:.2f}s, {line_count} lines received")
+                resp.close()
+                return  # Success
 
-        logger.info(f"Streaming completed in {time.time() - start_time:.2f}s")
+            except (req_lib.exceptions.ConnectionError, ConnectionResetError) as e:
+                last_error = e
+                logger.error(f"[DEBUG-LLM] ConnectionError on attempt {attempt + 1}: {type(e).__name__}: {e}")
+                # Only retry if no chunks have been yielded yet
+                if not chunks_yielded and attempt < self.max_retries:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"[DEBUG-LLM] Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"[DEBUG-LLM] Giving up. chunks_yielded={chunks_yielded}, attempt={attempt + 1}")
+                    raise
+            except req_lib.exceptions.HTTPError as e:
+                logger.error(f"[DEBUG-LLM] HTTPError: {e.response.status_code} — {e.response.text[:500]}")
+                raise
+            except Exception as e:
+                logger.error(f"[DEBUG-LLM] Unexpected error: {type(e).__name__}: {e}", exc_info=True)
+                raise
+
+        # All retries exhausted
+        raise ConnectionError(f"Company LLM unreachable after {self.max_retries + 1} attempts. Last error: {last_error}")
 
     # ---- Sync (LangChain interface) ----
 
@@ -182,11 +213,14 @@ class ChatCompanyLLM(BaseChatModel):
         json_data = self._build_request_body(user_prompt, system_prompt)
 
         # Update current generation with model info (Langfuse v4 pattern)
-        lf_client = get_client()
-        lf_client.update_current_generation(
-            model=self.model,
-            metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "false"}
-        )
+        try:
+            lf_client = get_client()
+            lf_client.update_current_generation(
+                model=self.model,
+                metadata={"temperature": str(self.temperature), "top_p": str(self.top_p), "stream": "false"}
+            )
+        except Exception as lf_err:
+            logger.debug(f"Langfuse update skipped: {lf_err}")
 
         start_time = time.time()
         logger.info(f"Calling Company LLM (sync): {self.model}")

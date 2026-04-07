@@ -4,12 +4,16 @@ import logging
 import time
 from contextlib import contextmanager
 
+import os
+
+_log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, _log_level, logging.INFO),
     format="%(asctime)s | %(levelname)-8s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("chatbot")
+logger.setLevel(getattr(logging, _log_level, logging.INFO))
 
 
 @contextmanager

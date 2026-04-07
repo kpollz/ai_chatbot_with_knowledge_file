@@ -37,11 +37,60 @@ Setting Trace Attributes (session_id, user_id):
         return result
 """
 
+import os
+import sys
+
+# Debug: Track Langfuse initialization
+_debug_enabled = os.environ.get("LANGFUSE_DEBUG", "false").lower() in ("true", "1")
+
+if _debug_enabled:
+    print(f"[LANGFUSE-DEBUG] Initializing langfuse_setup module...")
+    print(f"[LANGFUSE-DEBUG] LANGFUSE_PUBLIC_KEY set: {bool(os.environ.get('LANGFUSE_PUBLIC_KEY'))}")
+    print(f"[LANGFUSE-DEBUG] LANGFUSE_SECRET_KEY set: {bool(os.environ.get('LANGFUSE_SECRET_KEY'))}")
+    print(f"[LANGFUSE-DEBUG] LANGFUSE_HOST: {os.environ.get('LANGFUSE_HOST', 'NOT SET')}")
+
 from langfuse import (
     observe,
     get_client,
     propagate_attributes,
 )
+
+if _debug_enabled:
+    print(f"[LANGFUSE-DEBUG] Langfuse imported successfully")
+    try:
+        _test_client = get_client()
+        print(f"[LANGFUSE-DEBUG] get_client() returned: {_test_client}")
+        print(f"[LANGFUSE-DEBUG] Client type: {type(_test_client)}")
+    except Exception as e:
+        print(f"[LANGFUSE-DEBUG] get_client() FAILED: {type(e).__name__}: {e}")
+
+# Flag to track if Langfuse is available and working
+_langfuse_available: bool | None = None
+
+
+def is_langfuse_available() -> bool:
+    """Check if Langfuse client is properly configured and reachable."""
+    global _langfuse_available
+    if _langfuse_available is not None:
+        return _langfuse_available
+    
+    try:
+        client = get_client()
+        if client is None:
+            _langfuse_available = False
+            return False
+        # Try a lightweight check - if auth fails, client will be disabled
+        _langfuse_available = True
+        return True
+    except Exception:
+        _langfuse_available = False
+        return False
+
+
+def reset_langfuse_status():
+    """Reset the cached Langfuse availability status (e.g., after config change)."""
+    global _langfuse_available
+    _langfuse_available = None
 
 
 def flush_langfuse(timeout: float = 30.0) -> None:
