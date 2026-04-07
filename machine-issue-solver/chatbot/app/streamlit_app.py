@@ -7,6 +7,7 @@ import streamlit as st
 from graph import solve_issue_stream, StreamResult
 from history import check_context_limit
 from conversation_store import create_session_id, save_conversation
+from feedback import render_feedback_widget
 from logger import logger
 
 
@@ -105,20 +106,10 @@ for i, message in enumerate(st.session_state.messages):
                     st.divider()
         # Feedback widget for assistant messages
         if message["role"] == "assistant":
-            st.feedback("thumbs", key=f"fb_{session_id}_{i}")
-
-# Sync feedback from widgets → message dicts → JSON file
-feedback_changed = False
-for i, message in enumerate(st.session_state.messages):
-    if message["role"] == "assistant":
-        fb_val = st.session_state.get(f"fb_{session_id}_{i}")
-        if fb_val is not None:
-            new_fb = "like" if fb_val == 1 else "dislike"
-            if message.get("feedback") != new_fb:
-                message["feedback"] = new_fb
-                feedback_changed = True
-if feedback_changed:
-    save_conversation(session_id, st.session_state.messages)
+            render_feedback_widget(
+                msg_index=i,
+                trace_id=message.get("trace_id"),
+            )
 
 
 # ---- Context limit check ----
@@ -208,13 +199,14 @@ if st.session_state.processing and st.session_state.pending_query:
 
         response = response or "No response generated."
 
-        # Append assistant message (with issues for persistence)
+        # Append assistant message (with issues and trace_id for persistence)
         assistant_msg = {
             "role": "assistant",
             "content": response,
             "timestamp": datetime.now().isoformat(),
             "feedback": None,
             "issues": issues_found if issues_found else [],
+            "trace_id": stream_result.trace_id,
         }
         st.session_state.messages.append(assistant_msg)
 
@@ -231,7 +223,10 @@ if st.session_state.processing and st.session_state.pending_query:
 
         # Feedback widget for new message
         fb_idx = len(st.session_state.messages) - 1
-        st.feedback("thumbs", key=f"fb_{session_id}_{fb_idx}")
+        render_feedback_widget(
+            msg_index=fb_idx,
+            trace_id=stream_result.trace_id,
+        )
 
         # Auto-save conversation
         save_conversation(session_id, st.session_state.messages)

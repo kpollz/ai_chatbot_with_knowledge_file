@@ -16,7 +16,7 @@ import json
 import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langfuse import observe, propagate_attributes
+from langfuse import observe, propagate_attributes, get_client
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
 from api_client import search_issues_sync
@@ -190,10 +190,11 @@ PREFIX_BUFFER_SIZE = 20  # chars — enough to detect "<tool_call>" (11) or '{"t
 
 
 class StreamResult:
-    """Side-channel to pass metadata (issues, errors) out of the stream generator."""
+    """Side-channel to pass metadata (issues, errors, trace_id) out of the stream generator."""
     def __init__(self):
         self.issues: List[Dict] = []
         self.error: Optional[str] = None
+        self.trace_id: Optional[str] = None
 
 
 @observe(name="agent_solve_issue")
@@ -243,6 +244,13 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     
     with _attr_ctx:
         try:
+            # Capture trace_id for feedback scoring
+            if result is not None:
+                try:
+                    result.trace_id = get_client().get_current_trace_id()
+                except Exception:
+                    pass
+
             for iteration in range(MAX_ITERATIONS + 1):
                 messages = _build_agent_messages(query, history, scratchpad)
 
