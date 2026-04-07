@@ -19,9 +19,24 @@ async def lifespan(app: FastAPI):
     print("🔌 Checking database connection...")
     if await check_db_connection():
         print("✅ Database connected")
-        print("📊 Initializing database tables...")
-        await init_db()
-        print("✅ Database initialized")
+        # Safety check: only init if tables don't exist
+        from sqlalchemy import text
+        from database import async_session
+        async with async_session() as session:
+            try:
+                result = await session.execute(
+                    text("SELECT 1 FROM information_schema.tables WHERE table_name='issues'")
+                )
+                has_tables = result.scalar() is not None
+            except Exception:
+                has_tables = False
+        
+        if not has_tables:
+            print("📊 Creating database tables (first run)...")
+            await init_db()
+            print("✅ Tables created")
+        else:
+            print("📊 Tables already exist, skipping init")
     else:
         print("❌ Database connection failed")
     yield
