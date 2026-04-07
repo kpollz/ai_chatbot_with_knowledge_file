@@ -92,6 +92,17 @@ session_id = st.session_state.session_id
 for i, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        # Show issues from history if present
+        if message["role"] == "assistant" and message.get("issues"):
+            issues = message["issues"]
+            with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
+                for j, issue in enumerate(issues, 1):
+                    st.markdown(f"**Issue #{issue.get('IssueID', 'N/A')}**")
+                    st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
+                    st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
+                    st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                    st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
+                    st.divider()
         # Feedback widget for assistant messages
         if message["role"] == "assistant":
             st.feedback("thumbs", key=f"fb_{session_id}_{i}")
@@ -188,18 +199,6 @@ if st.session_state.processing and st.session_state.pending_query:
                 response = response or f"Error: {stream_result.error}"
             issues_found = stream_result.issues
 
-            # Show issues if found
-            if issues_found:
-                with st.expander(f"📚 Found {len(issues_found)} related issues",
-                                 expanded=False):
-                    for j, issue in enumerate(issues_found, 1):
-                        st.markdown(f"**Issue #{issue.get('IssueID', 'N/A')}**")
-                        st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
-                        st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
-                        st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
-                        st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
-                        st.divider()
-
         except Exception as e:
             response = f"❌ An error occurred: {str(e)}"
             st.error(response)
@@ -207,14 +206,26 @@ if st.session_state.processing and st.session_state.pending_query:
 
         response = response or "No response generated."
 
-        # Append assistant message
+        # Append assistant message (with issues for persistence)
         assistant_msg = {
             "role": "assistant",
             "content": response,
             "timestamp": datetime.now().isoformat(),
             "feedback": None,
+            "issues": issues_found if issues_found else [],
         }
         st.session_state.messages.append(assistant_msg)
+
+        # Show issues expander immediately (before rerun)
+        if issues_found:
+            with st.expander(f"📚 Found {len(issues_found)} related issues", expanded=False):
+                for j, issue in enumerate(issues_found, 1):
+                    st.markdown(f"**Issue #{issue.get('IssueID', 'N/A')}**")
+                    st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
+                    st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
+                    st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                    st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
+                    st.divider()
 
         # Feedback widget for new message
         fb_idx = len(st.session_state.messages) - 1
