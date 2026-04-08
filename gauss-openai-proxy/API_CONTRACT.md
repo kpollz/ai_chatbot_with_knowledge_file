@@ -70,8 +70,8 @@ Authorization: Bearer <GAUSS_API_KEY>
   "max_completion_tokens": 8192,            // int — OpenAI mới, thay cho max_tokens
   "max_tokens": 4096,                       // int — OpenAI cũ (hiếm gặp từ OpenClaw)
 
-  // ── Tùy chọn — Proxy nên CHẤP NHẬN nhưng BỎ QUA (Gauss không hỗ trợ) ───
-  "stream_options": {"include_usage": true}, // object
+  // ── Tùy chọn — Proxy nên CHẤP NHẬN và XỬ LÝ ────────────────────────────
+  "stream_options": {"include_usage": true}, // object — Proxy gửi usage chunk cuối stream
   "store": false,                            // boolean
   "tools": [ /* xem 2.4 */ ],               // array — CẦN CHUYỂN THÀNH TEXT PROMPT
   "tool_choice": "auto",                    // string | object
@@ -251,19 +251,22 @@ data: [DONE]
 
 ### 3.2 Streaming Response — Có tool call (MỚI — do proxy giả lập)
 
-Khi Gauss trả text chứa `<tool_call>`, proxy phải chuyển thành SSE `tool_calls` format.
+Khi Gauss trả text chứa `⟦`, proxy phải chuyển thành SSE `tool_calls` format.
+Proxy sử dụng **incremental streaming** — name và arguments được gửi riêng biệt theo chuẩn OpenAI.
 
-**Ví dụ Gauss trả về:**
+**Ví dụ Gauss trả về (streaming):**
 ```
 Tôi sẽ đọc file cho bạn.
-<tool_call>{"name": "read", "arguments": {"file_path": "/tmp/file.txt"}}</tool_call>
+⟦{"name": "read", "arguments": {"file_path": "/tmp/file.txt"}}⟧
 ```
 
-**Proxy chuyển thành SSE:**
+**Proxy chuyển thành SSE (incremental):**
 ```
 data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[{"index":0,"delta":{"role":"assistant","content":"Tôi sẽ đọc file cho bạn.\n"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_proxy_<uuid>","type":"function","function":{"name":"read","arguments":"{\"file_path\": \"/tmp/file.txt\"}"}}]},"finish_reason":null}]}
+data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_proxy_<uuid>","type":"function","function":{"name":"read","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"file_path\": \"/tmp/file.txt\"}"}}]},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
 
@@ -271,12 +274,17 @@ data: [DONE]
 
 ```
 
-**Quy tắc:**
-- Text trước `<tool_call>` → gửi như content chunks bình thường
-- Nội dung `<tool_call>` → chuyển thành `delta.tool_calls` chunk
+**Quy tắc (incremental streaming theo chuẩn OpenAI):**
+- Text trước `⟦` → gửi như content chunks bình thường
+- Khi phát hiện `⟦`:
+  1. **Chunk 1 (tool_call_start)**: `delta.tool_calls` với `id`, `type`, `function.name`, `function.arguments: ""`
+  2. **Chunk 2+ (tool_call_args)**: `delta.tool_calls` chỉ có `function.arguments` fragment
+  3. **Final chunk**: `delta: {}`, `finish_reason: "tool_calls"`
 - `finish_reason` = `"tool_calls"` (KHÔNG phải `"stop"`)
 - `tool_calls[].id` = proxy tự generate: `"call_proxy_<uuid_8char>"`
 - `tool_calls[].function.arguments` = **JSON string** (không phải object)
+- **Chunk 1** có `name`, **chunk 2+** chỉ có `arguments` (chuẩn OpenAI streaming)
+- Nếu tool call bị truncate giữa stream, proxy tự complete JSON bằng `_try_complete_incomplete_json()`
 
 ### 3.3 Non-Streaming Response (nếu `stream: false`)
 
@@ -331,7 +339,23 @@ data: [DONE]
 }
 ```
 
-### 3.4 Error Response
+### 3.4 Streaming Response — Usage Chunk (khi `stream_options.include_usage: true`)
+
+Khi OpenClaw gửi `stream_options: {include_usage: true}`, proxy gửi thêm một chunk usage
+sau chunk cuối (`finish_reason`) và trước `[DONE]`:
+
+```
+data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-<uuid>","object":"chat.completion.chunk","created":1700000000,"model":"gauss-2.3","choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}
+
+data: [DONE]
+
+```
+
+> **Lưu ý**: Gauss không hỗ trợ token counting, nên usage luôn trả `0`.
+
+### 3.5 Error Response
 
 ```json
 {

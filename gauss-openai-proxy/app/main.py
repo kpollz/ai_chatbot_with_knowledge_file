@@ -98,8 +98,9 @@ def _error_json(
 def _prepare_request(body: ChatCompletionRequest) -> tuple[str, str, list[dict]]:
     """Run the full request pipeline: normalize → tool translate → flatten.
 
-    Returns: (input_value, system_message, tools_raw)
+    Returns: (input_value, system_message, tools_raw, include_usage)
       - tools_raw: original tools list (for detecting if tools were sent)
+      - include_usage: whether client requested usage in stream
     """
     # Step 1: Convert Pydantic messages to dicts
     raw_messages = []
@@ -132,7 +133,12 @@ def _prepare_request(body: ChatCompletionRequest) -> tuple[str, str, list[dict]]
     # Step 5: Flatten messages → (input_value, system_message)
     input_value, system_message = flatten_messages(processed)
 
-    return input_value, system_message, tools_raw
+    # Check if client wants usage in stream
+    include_usage = False
+    if body.stream_options and isinstance(body.stream_options, dict):
+        include_usage = body.stream_options.get("include_usage", False)
+
+    return input_value, system_message, tools_raw, include_usage
 
 
 def _inject_tool_prompt(messages: list[dict], tool_prompt: str) -> None:
@@ -187,7 +193,7 @@ async def chat_completions(body: ChatCompletionRequest, request: Request):
         )
 
     # ── Prepare request (normalize + tool translate + flatten) ───────────
-    input_value, system_message, tools_raw = _prepare_request(body)
+    input_value, system_message, tools_raw, include_usage = _prepare_request(body)
 
     if not input_value and not system_message:
         return _error_json(
@@ -221,6 +227,7 @@ async def chat_completions(body: ChatCompletionRequest, request: Request):
                 top_p=top_p,
                 model_name=body.model,
                 has_tools=has_tools,
+                include_usage=include_usage,
             ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
@@ -323,6 +330,7 @@ async def _stream_generator(
     top_p: float,
     model_name: str,
     has_tools: bool,
+    include_usage: bool = False,
 ):
     """Yield SSE lines translating Company LLM streaming to OpenAI format.
 
@@ -354,8 +362,12 @@ async def _stream_generator(
             return _make_chunk(DeltaMessage(role="assistant", content=text))
         return _make_chunk(DeltaMessage(content=text))
 
+    # Track current streaming tool call for incremental emission
+    _current_tc_id = ""
+    _current_tc_index = 0
+
     def _emit_tool_call(tool_call: dict) -> str:
-        """Create an SSE chunk for a tool call."""
+        """Create an SSE chunk for a complete tool call (backward compat)."""
         nonlocal is_first, detected_tool_call
         detected_tool_call = True
         openai_tc = tool_call_to_openai_format(tool_call)
@@ -363,6 +375,31 @@ async def _stream_generator(
             is_first = False
             return _make_chunk(DeltaMessage(role="assistant", tool_calls=[openai_tc]))
         return _make_chunk(DeltaMessage(tool_calls=[openai_tc]))
+
+    def _emit_tool_call_start(name: str, call_id: str, index: int) -> str:
+        """Emit SSE chunk announcing a new tool call with name and empty args."""
+        nonlocal is_first, detected_tool_call, _current_tc_id, _current_tc_index
+        detected_tool_call = True
+        _current_tc_id = call_id
+        _current_tc_index = index
+        tc_obj = {
+            "index": index,
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": ""},
+        }
+        if is_first:
+            is_first = False
+            return _make_chunk(DeltaMessage(role="assistant", tool_calls=[tc_obj]))
+        return _make_chunk(DeltaMessage(tool_calls=[tc_obj]))
+
+    def _emit_tool_call_args(fragment: str) -> str:
+        """Emit SSE chunk with arguments fragment for current tool call."""
+        tc_obj = {
+            "index": _current_tc_index,
+            "function": {"arguments": fragment},
+        }
+        return _make_chunk(DeltaMessage(tool_calls=[tc_obj]))
 
     try:
         for chunk_text in gauss_client.stream_call(
@@ -378,12 +415,21 @@ async def _stream_generator(
                 # Tool-aware streaming: feed through detector
                 events = detector.feed(chunk_text)
                 for event in events:
-                    if event["type"] == "text":
+                    etype = event["type"]
+                    if etype == "text":
                         content = event["content"]
                         if content:
                             yield _emit_text(content)
-                    elif event["type"] == "tool_call":
+                    elif etype == "tool_call":
                         yield _emit_tool_call(event["tool_call"])
+                    elif etype == "tool_call_start":
+                        yield _emit_tool_call_start(
+                            event["name"], event["call_id"], event["index"]
+                        )
+                    elif etype == "tool_call_args":
+                        yield _emit_tool_call_args(event["fragment"])
+                    elif etype == "tool_call_end":
+                        pass  # Internal state only, no SSE needed
             else:
                 # Simple streaming: no tool detection
                 if is_first:
@@ -397,16 +443,38 @@ async def _stream_generator(
         if detector:
             flush_events = detector.flush()
             for event in flush_events:
-                if event["type"] == "text":
+                etype = event["type"]
+                if etype == "text":
                     content = event["content"]
                     if content:
                         yield _emit_text(content)
-                elif event["type"] == "tool_call":
+                elif etype == "tool_call":
                     yield _emit_tool_call(event["tool_call"])
+                elif etype == "tool_call_start":
+                    yield _emit_tool_call_start(
+                        event["name"], event["call_id"], event["index"]
+                    )
+                elif etype == "tool_call_args":
+                    yield _emit_tool_call_args(event["fragment"])
+                elif etype == "tool_call_end":
+                    pass
 
         # ── Final stop chunk ─────────────────────────────────────────────
         finish_reason = "tool_calls" if detected_tool_call else "stop"
         yield _make_chunk(DeltaMessage(), finish_reason=finish_reason)
+
+        # ── Usage chunk (when stream_options.include_usage is true) ──────
+        if include_usage:
+            usage_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            }
+            yield f"data: {json.dumps(usage_chunk)}\n\n"
+
         yield "data: [DONE]\n\n"
 
     except Exception as e:

@@ -77,6 +77,9 @@ class ChatCompletionRequest(BaseModel):
     tools: Optional[List[Tool]] = None
     tool_choice: Optional[Any] = None
 
+    # Streaming options (OpenAI sends stream_options: {include_usage: true})
+    stream_options: Optional[dict] = None
+
     @property
     def effective_max_tokens(self) -> Optional[int]:
         """Return whichever max tokens field was provided."""

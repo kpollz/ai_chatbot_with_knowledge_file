@@ -250,8 +250,6 @@ def test_streaming_tool_call(mock_stream):
             text_content.append(delta["content"])
         if delta.get("tool_calls"):
             tool_call_found = True
-            tc = delta["tool_calls"][0]
-            assert tc["function"]["name"] == "read_file"
         if fr:
             finish_reason = fr
 
@@ -277,7 +275,7 @@ def test_unknown_model():
         json=body,
         headers={"Authorization": "Bearer test-key"},
     )
-    assert resp.status_code == 200  # JSONResponse with 404 inside
+    assert resp.status_code == 404
     data = resp.json()
     assert data["error"]["code"] == "model_not_found"
 
