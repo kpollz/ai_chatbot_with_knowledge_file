@@ -154,7 +154,7 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
         """<style>
         /* Force feedback buttons to be square, compact, no wrap */
         div[data-testid="stColumn"] button[id*="fb_ball_"] {
-            font-size: 0.7rem !important;
+            font-size: clamp(0.55rem, 0.8vw, 0.85rem) !important;
             padding: 0 !important;
             height: 0 !important;
             min-height: 0 !important;
