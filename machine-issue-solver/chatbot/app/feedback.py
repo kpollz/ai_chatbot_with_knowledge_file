@@ -149,29 +149,33 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
         unsafe_allow_html=True,
     )
 
-    # 10 square equal buttons via Streamlit columns + CSS targeting
-    # Target this specific row using the fb_ball_ key pattern in button IDs
+    # 10 square buttons left-aligned: 10 equal cols + 1 big spacer on right
     st.markdown(
         """<style>
-        /* Target feedback buttons — square, equal, no wrap */
-        button[kind="secondary"][id*="fb_ball_"] {
+        /* Force feedback buttons to be square, compact, no wrap */
+        div[data-testid="stColumn"] button[id*="fb_ball_"] {
             font-size: 0.7rem !important;
-            padding: 0.2rem 0 !important;
+            padding: 0 !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            aspect-ratio: 1 / 1 !important;
             min-width: 100% !important;
+            max-width: 100% !important;
             white-space: nowrap !important;
-            line-height: 1.2 !important;
-            aspect-ratio: 1 / 1;
+            line-height: 1 !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
+            box-sizing: border-box !important;
         }
         </style>""",
         unsafe_allow_html=True,
     )
-    btn_cols = st.columns(10)
-    for i, col in enumerate(btn_cols):
+    # 10 button columns + large spacer to push buttons left
+    all_cols = st.columns([1]*10 + [8])
+    for i in range(10):
         score_val = i + 1
-        with col:
+        with all_cols[i]:
             if st.button(
                 str(score_val),
                 key=f"fb_ball_{msg_index}_{score_val}",
@@ -180,6 +184,7 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
                 st.session_state[f"fb_dialog_score_{msg_index}"] = score_val
                 st.session_state[f"fb_dialog_open_{msg_index}"] = True
                 st.rerun()
+    # all_cols[10] is the spacer — intentionally empty
 
     # Open dialog if a ball was clicked
     if st.session_state.get(f"fb_dialog_open_{msg_index}", False):
