@@ -526,9 +526,14 @@ You have access to the following tools. To use a tool, include EXACTLY this synt
 
 ### Rules:
 - Call only ONE tool per response
-- If you don't need a tool, respond directly without <tool_call> tags
+- If you don't need a tool, respond directly without ⟦ tags
 - After receiving tool results, use that data to answer the user
 - Always include the tool name and all required arguments
+
+### IMPORTANT:
+When you need to use a tool, output the ⟦ IMMEDIATELY without any explanatory text before it.
+Do NOT write sentences like 'I will check that' or 'Let me look that up' before the tool call.
+Start your response directly with the ⟦ tag.
 ```
 
 **Pseudocode để generate tool prompt:**

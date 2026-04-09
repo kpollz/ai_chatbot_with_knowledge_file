@@ -272,6 +272,13 @@ def tools_to_prompt(tools: list[dict]) -> str:
             f"- If you don't need a tool, respond directly without {TOOL_CALL_OPEN} tags",
             "- After receiving tool results, use that data to answer the user",
             "- Always include the tool name and all required arguments",
+            "",
+            "### IMPORTANT:",
+            f"When you need to use a tool, output the {TOOL_CALL_OPEN} IMMEDIATELY "
+            "without any explanatory text before it.",
+            "Do NOT write sentences like 'I will check that' or 'Let me look that up' "
+            "before the tool call.",
+            f"Start your response directly with the {TOOL_CALL_OPEN} tag.",
         ]
     )
 
@@ -362,24 +369,39 @@ def parse_tool_call_from_text(text: str) -> tuple[str, dict | None]:
     """Parse tool call from complete Gauss response text.
 
     Ref: API_CONTRACT.md section 5.4
+
+    Uses brace-depth matching to find the correct closing tag,
+    robust against </tool_call > appearing inside string values.
     """
-    # Try 1: Primary XML-tagged
-    match = TOOL_CALL_PATTERN.search(text)
-    if match:
-        tool_call = _extract_json_tool_call(match.group(1))
-        if tool_call:
-            text_before = text[: match.start()].strip()
-            return text_before, tool_call
-        logger.warning(f"Failed to parse tool call from tagged content: {match.group(1)[:200]}")
+    # Try 1: Primary XML-tagged — use brace-depth matching for robustness
+    open_match = TOOL_CALL_OPEN_RE.search(text)
+    if open_match:
+        content_start = open_match.end()
+        # Find the correct closing tag by ensuring the JSON between them is balanced
+        # This handles cases where </tool_call > appears inside string values
+        close_pos = _find_close_tag_after_balanced_json(text, content_start)
+        if close_pos is not None:
+            inner = text[content_start:close_pos]
+            tool_call = _extract_json_tool_call(inner)
+            if tool_call:
+                text_before = text[:open_match.start()].strip()
+                return text_before, tool_call
+            logger.warning(f"Failed to parse tool call from tagged content: {inner[:200]}")
 
     # Try 1b: Alternative tag formats
-    for alt_pattern in TOOL_CALL_ALT_PATTERNS:
-        match = alt_pattern.search(text)
-        if match:
-            tool_call = _extract_json_tool_call(match.group(1))
-            if tool_call:
-                text_before = text[: match.start()].strip()
-                return text_before, tool_call
+    for alt_open, alt_close in [
+        (re.compile(r"<function_call\s*>"), re.compile(r"</function_call\s*>")),
+        (re.compile(r"<tool\s*>"), re.compile(r"</tool\s*>")),
+    ]:
+        alt_match = alt_open.search(text)
+        if alt_match:
+            inner_start = alt_match.end()
+            close = alt_close.search(text, inner_start)
+            if close:
+                tool_call = _extract_json_tool_call(text[inner_start:close.start()])
+                if tool_call:
+                    text_before = text[:alt_match.start()].strip()
+                    return text_before, tool_call
 
     # Try 2: Raw JSON fallback
     match = RAW_TOOL_CALL_PATTERN.search(text)
@@ -405,6 +427,57 @@ def parse_tool_call_from_text(text: str) -> tuple[str, dict | None]:
             return text_before, tool_call
 
     return text, None
+
+
+def _find_close_tag_after_balanced_json(text: str, start: int) -> int | None:
+    """Find </tool_call > position after a brace-balanced JSON object.
+
+    Scans forward from `start`, tracking brace depth and string state.
+    Once braces return to depth 0, looks for the closing tag.
+    This correctly handles </tool_call > appearing inside string values.
+
+    Returns the start position of the closing tag content (i.e., where
+    the inner text ends), or None if not found.
+    """
+    depth = 0
+    in_string = False
+    escape_next = False
+    i = start
+
+    while i < len(text):
+        c = text[i]
+
+        if escape_next:
+            escape_next = False
+            i += 1
+            continue
+
+        if in_string:
+            if c == "\\":
+                escape_next = True
+            elif c == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if c == '"':
+            in_string = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                # JSON object appears balanced — look for closing tag after this
+                rest = text[i + 1 :]
+                close_match = TOOL_CALL_CLOSE_RE.search(rest)
+                if close_match:
+                    return i + 1 + close_match.start()
+                return None
+        i += 1
+
+    # If we get here, braces didn't balance — fall back to first close tag
+    close_match = TOOL_CALL_CLOSE_RE.search(text, start)
+    return close_match.start() if close_match else None
 
 
 def tool_call_to_openai_format(tool_call: dict, index: int = 0) -> dict:

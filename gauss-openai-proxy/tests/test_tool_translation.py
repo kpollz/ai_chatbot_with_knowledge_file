@@ -562,3 +562,47 @@ class TestStreamingToolDetector:
         # Name should be detected during feed, then args recovered in flush
         names = _collect_tool_names(all_events)
         assert names == ["read"]
+
+    def test_close_tag_inside_string_value(self):
+        """Content containing </tool_call > inside a string value should not
+        cause premature truncation.
+
+        This is the key bug fix: parse_tool_call_from_text now uses
+        brace-depth matching instead of regex non-greedy match.
+        """
+        from tool_translation import TOOL_CALL_OPEN, TOOL_CALL_CLOSE
+        # The close tag appears inside the "content" string value
+        inner_json = json.dumps({
+            "name": "write_file",
+            "arguments": {"content": f"Doc: {TOOL_CALL_CLOSE}"}
+        })
+        text = f"{TOOL_CALL_OPEN}{inner_json}{TOOL_CALL_CLOSE}"
+        text_before, tool_call = parse_tool_call_from_text(text)
+
+        assert tool_call is not None
+        assert tool_call["name"] == "write_file"
+        assert TOOL_CALL_CLOSE in tool_call["arguments"]["content"]
+
+    def test_close_tag_inside_string_streaming(self):
+        """Streaming detector should handle </tool_call > inside string args."""
+        from tool_translation import TOOL_CALL_OPEN, TOOL_CALL_CLOSE
+        inner_json = json.dumps({
+            "name": "write_file",
+            "arguments": {"content": f"Has {TOOL_CALL_CLOSE} inside"}
+        })
+        full_text = f"{TOOL_CALL_OPEN}{inner_json}{TOOL_CALL_CLOSE}"
+
+        detector = StreamingToolDetector()
+        all_events = []
+        # Feed in 30-char chunks
+        for i in range(0, len(full_text), 30):
+            all_events += detector.feed(full_text[i:i+30])
+        all_events += detector.flush()
+
+        names = _collect_tool_names(all_events)
+        args_frags = _collect_args_fragments(all_events)
+        end_events = [e for e in all_events if e["type"] == "tool_call_end"]
+
+        assert names == ["write_file"]
+        assert len(end_events) == 1
+        assert "Has" in args_frags
