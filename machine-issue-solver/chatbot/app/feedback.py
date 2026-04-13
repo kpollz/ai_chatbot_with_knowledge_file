@@ -1,16 +1,23 @@
 """
-Feedback System — Rating + Dialog Forms + Langfuse Score Submission
+Feedback System — Star Rating + Dialog Forms + Langfuse Score Submission
 
-Rating scale: 1-10
-  - 1-6:  Form with Opinion, Best Answer (required), Harmful/Risk
-  - 7-8:  Form with Opinion, Best Answer (optional)
-  - 9-10: Form with Opinion, Best Answer checkbox
+Uses Streamlit native st.feedback("stars") — 5 stars mapped to 1-10 scale.
+Star mapping: ⭐=2, ⭐⭐=4, ⭐⭐⭐=6, ⭐⭐⭐⭐=8, ⭐⭐⭐⭐⭐=10
+
+Dialog forms by score range:
+  - 2-6:  Opinion + Best Answer (required) + Harmful/Risk
+  - 8:    Opinion + Best Answer (optional)
+  - 10:   Opinion + Best Answer checkbox
 """
 
 import json
 import streamlit as st
 from langfuse import get_client
 from logger import logger
+
+
+# Star value (0-4) → score (2,4,6,8,10)
+STAR_SCORE_MAP = {0: 2, 1: 4, 2: 6, 3: 8, 4: 10}
 
 
 def submit_feedback_to_langfuse(trace_id: str, score: int, opinion: str = "",
@@ -89,7 +96,7 @@ def _feedback_dialog(score: int, trace_id: str, msg_index: int):
             key=f"fb_best_{msg_index}"
         )
 
-    # Harmful/Risk (only for 1-6)
+    # Harmful/Risk (only for low scores)
     is_harmful = False
     if fields["show_harmful"]:
         is_harmful = st.checkbox(
@@ -121,8 +128,18 @@ def _feedback_dialog(score: int, trace_id: str, msg_index: int):
         st.rerun()
 
 
+def _on_star_selected(msg_index: int):
+    """Callback when user selects a star — triggers dialog open."""
+    fb_key = f"fb_stars_{msg_index}"
+    star_val = st.session_state.get(fb_key)
+    if star_val is not None:
+        score = STAR_SCORE_MAP.get(star_val, 6)
+        st.session_state[f"fb_dialog_score_{msg_index}"] = score
+        st.session_state[f"fb_dialog_open_{msg_index}"] = True
+
+
 def render_feedback_widget(msg_index: int, trace_id: str = None):
-    """Render a subtle feedback widget: divider + faint prompt + 10 clickable balls."""
+    """Render feedback widget using native st.feedback stars."""
     already_submitted = st.session_state.get(f"fb_submitted_{msg_index}", False)
     submitted_score = st.session_state.get(f"fb_score_{msg_index}", None)
 
@@ -149,47 +166,19 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
         unsafe_allow_html=True,
     )
 
-    # 10 square buttons left-aligned: 10 equal cols + 1 big spacer on right
-    st.markdown(
-        """<style>
-        /* Force feedback buttons to be square, compact, no wrap */
-        div[data-testid="stColumn"] button[id*="fb_ball_"] {
-            font-size: clamp(0.3rem, 0.5vw, 0.55rem) !important;
-            padding: 0 !important;
-            height: 0 !important;
-            min-height: 0 !important;
-            aspect-ratio: 1 / 1 !important;
-            min-width: 100% !important;
-            max-width: 100% !important;
-            white-space: nowrap !important;
-            line-height: 1 !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            box-sizing: border-box !important;
-        }
-        </style>""",
-        unsafe_allow_html=True,
+    # Native Streamlit stars — on_change triggers dialog
+    st.feedback(
+        "stars",
+        key=f"fb_stars_{msg_index}",
+        on_change=_on_star_selected,
+        kwargs={"msg_index": msg_index},
+        disabled=already_submitted,
     )
-    # 10 button columns + large spacer to push buttons left
-    all_cols = st.columns([1]*10 + [8])
-    for i in range(10):
-        score_val = i + 1
-        with all_cols[i]:
-            if st.button(
-                str(score_val),
-                key=f"fb_ball_{msg_index}_{score_val}",
-                help=f"Đánh giá {score_val}/10",
-            ):
-                st.session_state[f"fb_dialog_score_{msg_index}"] = score_val
-                st.session_state[f"fb_dialog_open_{msg_index}"] = True
-                st.rerun()
-    # all_cols[10] is the spacer — intentionally empty
 
-    # Open dialog if a ball was clicked
+    # Open dialog if star was selected
     if st.session_state.get(f"fb_dialog_open_{msg_index}", False):
         st.session_state[f"fb_dialog_open_{msg_index}"] = False
-        dialog_score = st.session_state.get(f"fb_dialog_score_{msg_index}", 5)
+        dialog_score = st.session_state.get(f"fb_dialog_score_{msg_index}", 6)
         _feedback_dialog(
             score=dialog_score,
             trace_id=trace_id or "",
