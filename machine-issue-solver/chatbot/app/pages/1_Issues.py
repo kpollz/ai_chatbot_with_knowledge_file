@@ -137,6 +137,11 @@ def check_team_line_machine(team_name: str, line_name: str, machine_name: str,
 tab_browse, tab_create, tab_edit = st.tabs(["📋 Duyệt (Browse)", "➕ Tạo mới (Create)", "✏️ Chỉnh sửa / Xóa"])
 
 
+# ---- Session state init for pagination ----
+if "issues_page_num" not in st.session_state:
+    st.session_state.issues_page_num = 1
+
+
 # ========== TAB: Browse with Pagination ==========
 with tab_browse:
     col_controls, col_refresh = st.columns([6, 1])
@@ -145,7 +150,7 @@ with tab_browse:
         page_size_options = [10, 25, 50, 100]
         col1, col2, col3 = st.columns([1, 1, 4])
         with col1:
-            page_size = st.selectbox("Số dòng/trang", options=page_size_options, index=1, key="browse_page_size")
+            page_size = st.selectbox("Số dòng/trang", options=page_size_options, index=1)
 
         try:
             total_issues = load_issues_count()
@@ -155,8 +160,20 @@ with tab_browse:
 
         total_pages = max(1, (total_issues + page_size - 1) // page_size)
 
+        # Clamp page number to valid range when page size changes
+        if st.session_state.issues_page_num > total_pages:
+            st.session_state.issues_page_num = total_pages
+        if st.session_state.issues_page_num < 1:
+            st.session_state.issues_page_num = 1
+
         with col2:
-            page_num = st.number_input("Trang", min_value=1, max_value=total_pages, value=1, step=1, key="browse_page_num")
+            page_num = st.number_input(
+                "Trang", min_value=1, max_value=total_pages,
+                value=st.session_state.issues_page_num, step=1,
+            )
+
+        # Sync widget value back to session state
+        st.session_state.issues_page_num = page_num
 
         with col3:
             st.markdown(f"""
@@ -168,6 +185,7 @@ with tab_browse:
     with col_refresh:
         if st.button("🔄 Làm mới", use_container_width=True):
             st.cache_data.clear()
+            st.session_state.issues_page_num = 1
             st.rerun()
 
     skip = (page_num - 1) * page_size
@@ -212,16 +230,18 @@ with tab_browse:
     else:
         st.info("Không có issue nào.")
 
-    # Pagination buttons
+    # Pagination buttons using callbacks to avoid direct session_state assignment to widget keys
+    def _go_prev():
+        st.session_state.issues_page_num = max(1, st.session_state.issues_page_num - 1)
+
+    def _go_next():
+        st.session_state.issues_page_num = min(total_pages, st.session_state.issues_page_num + 1)
+
     col_prev, col_spacer, col_next = st.columns([1, 3, 1])
     with col_prev:
-        if st.button("◀ Trang trước", disabled=(page_num <= 1), use_container_width=True):
-            st.session_state.browse_page_num = page_num - 1
-            st.rerun()
+        st.button("◀ Trang trước", disabled=(page_num <= 1), use_container_width=True, on_click=_go_prev)
     with col_next:
-        if st.button("Trang sau ▶", disabled=(page_num >= total_pages), use_container_width=True):
-            st.session_state.browse_page_num = page_num + 1
-            st.rerun()
+        st.button("Trang sau ▶", disabled=(page_num >= total_pages), use_container_width=True, on_click=_go_next)
 
 
 # ========== TAB: Create (Excel-style form) ==========
