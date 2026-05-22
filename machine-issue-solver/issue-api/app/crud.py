@@ -405,6 +405,12 @@ async def update_issue(db: AsyncSession, issue_id: int, issue: IssueUpdate) -> O
     return db_issue
 
 
+async def get_issues_count(db: AsyncSession) -> int:
+    """Get total number of issues."""
+    result = await db.execute(select(func.count(Issue.id)))
+    return result.scalar()
+
+
 async def delete_issue(db: AsyncSession, issue_id: int) -> bool:
     db_issue = await get_issue(db, issue_id)
     if not db_issue:

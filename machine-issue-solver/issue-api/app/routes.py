@@ -234,6 +234,12 @@ async def list_issues(
     return issues
 
 
+@issue_router.get("/count", response_model=int)
+async def count_issues(db: AsyncSession = Depends(get_db)):
+    """Get total number of issues."""
+    return await crud.get_issues_count(db)
+
+
 @issue_router.get("/search", response_model=List[IssueSearchResult])
 async def search_issues(
     machine_name: str = Query(..., description="Machine name to search"),
@@ -271,6 +277,9 @@ async def get_issue(issue_id: int, db: AsyncSession = Depends(get_db)):
     issue = await crud.get_issue(db, issue_id)
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
+    # Convert date to string format
+    if issue.date and hasattr(issue.date, 'strftime'):
+        issue.date = issue.date.strftime("%Y-%m-%d")
     return issue
 
 

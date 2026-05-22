@@ -34,6 +34,10 @@ def get_issues_sync(skip: int = 0, limit: int = 500) -> List[Dict]:
     return _sync_request("GET", "/issues/", params={"skip": skip, "limit": limit})
 
 
+def get_issues_count_sync() -> int:
+    return _sync_request("GET", "/issues/count")
+
+
 def get_issue_sync(issue_id: int) -> Dict:
     return _sync_request("GET", f"/issues/{issue_id}")
 
@@ -57,6 +61,41 @@ def get_lines_sync() -> List[Dict]:
 def get_teams_sync() -> List[Dict]:
     """List all teams."""
     return _sync_request("GET", "/teams/")
+
+
+def find_team_by_name_sync(team_name: str) -> Dict:
+    """Find a team by name. Raises HTTPError if not found."""
+    return _sync_request("GET", "/teams/find/by-name", params={"team_name": team_name})
+
+
+def create_team_sync(team_name: str) -> Dict:
+    """Create a new team."""
+    return _sync_request("POST", "/teams/", json_data={"TeamName": team_name})
+
+
+def find_line_by_name_sync(line_name: str, team_id: int) -> Dict:
+    """Find a line by number within a team. Raises HTTPError if not found."""
+    return _sync_request("GET", "/lines/find/by-name", params={"line_name": line_name, "team_id": team_id})
+
+
+def find_machine_by_details_sync(machine_name: str, line_id: int, location: str = None, serial: str = None) -> List[Dict]:
+    """Find machines by name within a line."""
+    params = {"machine_name": machine_name, "line_id": line_id}
+    if location is not None:
+        params["location"] = location
+    if serial is not None:
+        params["serial"] = serial
+    return _sync_request("GET", "/machines/find/by-details", params=params)
+
+
+def create_machine_sync(machine_name: str, line_id: int, location: str = None, serial: str = None) -> Dict:
+    """Create a new machine under a line."""
+    data = {"MachineName": machine_name, "LineID": line_id}
+    if location is not None:
+        data["Location"] = location
+    if serial is not None:
+        data["Serial"] = serial
+    return _sync_request("POST", "/machines/", json_data=data)
 
 
 def get_machines_sync() -> List[Dict]:
