@@ -292,8 +292,8 @@ with tab_create:
     with st.container(border=True):
         st.markdown("**Nội dung vấn đề**")
         hien_tuong = st.text_area("Hiện tượng (Symptom) *", placeholder="Mô tả hiện tượng lỗi...", key="create_hien_tuong")
-        nguyen_nhan = st.text_area("Nguyên nhân (Cause)", placeholder="Nguyên nhân gốc rễ...", key="create_nguyen_nhan")
-        khac_phuc = st.text_area("Khắc phục (Solution)", placeholder="Cách khắc phục...", key="create_khac_phuc")
+        nguyen_nhan = st.text_area("Nguyên nhân (Cause) *", placeholder="Nguyên nhân gốc rễ...", key="create_nguyen_nhan")
+        khac_phuc = st.text_area("Khắc phục (Solution) *", placeholder="Cách khắc phục...", key="create_khac_phuc")
 
     user_input_val = st.text_input("User Input / Ghi chú thêm", placeholder="Thông tin bổ sung...", key="create_user_input")
 
@@ -305,8 +305,8 @@ with tab_create:
     preview_result = None
     with col_check:
         if st.button("🔍 Kiểm tra & Xem trước", type="secondary", use_container_width=True):
-            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not hien_tuong.strip():
-                st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng.")
+            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not hien_tuong.strip() or not nguyen_nhan.strip() or not khac_phuc.strip():
+                st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
             else:
                 preview_result = check_team_line_machine(
                     team_name, line_name, machine_name,
@@ -333,8 +333,8 @@ with tab_create:
 
     with col_create:
         if st.button("➕ Tạo Issue", type="primary", use_container_width=True):
-            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not hien_tuong.strip():
-                st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng.")
+            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not hien_tuong.strip() or not nguyen_nhan.strip() or not khac_phuc.strip():
+                st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
             else:
                 try:
                     data = {

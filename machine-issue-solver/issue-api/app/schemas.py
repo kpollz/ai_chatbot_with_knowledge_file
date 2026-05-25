@@ -7,6 +7,16 @@ from typing import Optional, List
 from datetime import datetime
 import re
 
+
+def _dt_to_str(v):
+    """Helper: convert datetime/date to ISO string for Pydantic validators."""
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d")
+    # SQLAlchemy Date type may return datetime.date
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y-%m-%d")
+    return v
+
 # Shared config
 _response_config = {"from_attributes": True}
 
@@ -139,6 +149,11 @@ class IssueResponse(BaseModel):
     user_input: Optional[str] = Field(None, alias="user_input")
 
     model_config = {**_response_config, "populate_by_name": True}
+
+    @field_validator("date", mode="before")
+    @classmethod
+    def _validate_date(cls, v):
+        return _dt_to_str(v)
 
 
 # ---- Import (convenience for Excel row) ----

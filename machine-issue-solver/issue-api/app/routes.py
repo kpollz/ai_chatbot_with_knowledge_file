@@ -226,12 +226,7 @@ async def list_issues(
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    issues = await crud.get_issues(db, skip=skip, limit=limit)
-    # Convert date to string format
-    for issue in issues:
-        if issue.date and hasattr(issue.date, 'strftime'):
-            issue.date = issue.date.strftime("%Y-%m-%d")
-    return issues
+    return await crud.get_issues(db, skip=skip, limit=limit)
 
 
 @issue_router.get("/count", response_model=int)
@@ -277,9 +272,6 @@ async def get_issue(issue_id: int, db: AsyncSession = Depends(get_db)):
     issue = await crud.get_issue(db, issue_id)
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-    # Convert date to string format
-    if issue.date and hasattr(issue.date, 'strftime'):
-        issue.date = issue.date.strftime("%Y-%m-%d")
     return issue
 
 
