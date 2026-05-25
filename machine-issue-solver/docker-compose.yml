@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: machine-issue-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-issue_api}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - ./issue-api/postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  issue-api:
+    build: ./issue-api
+    container_name: machine-issue-api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-issue_api}
+      API_HOST: 0.0.0.0
+      API_PORT: 8888
+    ports:
+      - "8888:8888"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./issue-api/app:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8888 --reload
+
+  chatbot:
+    build: ./chatbot
+    container_name: machine-issue-chatbot
+    environment:
+      ISSUE_API_URL: http://issue-api:8888
+      LLM_PROVIDER: ${LLM_PROVIDER:-company}
+      LLM_MODEL: ${LLM_MODEL:-Gauss2.3}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
+      COMPANY_LLM_API_KEY: ${COMPANY_LLM_API_KEY:-}
+      COMPANY_LLM_MODEL_ID: ${COMPANY_LLM_MODEL_ID:-}
+      COMPANY_LLM_MODEL_URL: ${COMPANY_LLM_MODEL_URL:-}
+      CONTEXT_WINDOW_LIMIT: ${CONTEXT_WINDOW_LIMIT:-128000}
+      CONTEXT_WARN_THRESHOLD: ${CONTEXT_WARN_THRESHOLD:-100000}
+    ports:
+      - "8501:8501"
+    depends_on:
+      - issue-api
+    volumes:
+      - ./chatbot/app:/app

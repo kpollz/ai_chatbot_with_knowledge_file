@@ -66,9 +66,9 @@ async def migrate_sqlite_to_postgres(sqlite_path: str):
                 "total_time": row[8],
                 "Week": row[9],
                 "Year": row[10],
-                "hien_tuong": row[11],
-                "nguyen_nhan": row[12],
-                "khac_phuc": row[13],
+                "symptom": row[11],
+                "cause": row[12],
+                "solution": row[13],
                 "PIC": row[14],
                 "user_input": row[15],
             }

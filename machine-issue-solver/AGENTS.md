@@ -213,10 +213,10 @@ Team (id, name, created_at)
   └── Line (id, team_id, line_number, created_at)
         └── Machine (id, line_id, name, location, serial, created_at)
               └── Issue (id, machine_id, date, start_time, stop_time, total_time,
-                         week, year, hien_tuong, nguyen_nhan, khac_phuc, pic, user_input, created_at)
+                         week, year, symptom, cause, solution, pic, user_input, created_at)
 ```
 
-**Note**: Vietnamese field names (`hien_tuong` = symptom, `nguyen_nhan` = cause, `khac_phuc` = solution) are used because they map directly to the existing factory data format.
+**Note**: Field names are in English (`symptom`, `cause`, `solution`). User-facing content remains in Vietnamese.
 
 ### ReAct Agent Flow
 

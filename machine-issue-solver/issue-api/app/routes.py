@@ -254,9 +254,9 @@ async def search_issues(
             start_time=issue.start_time,
             stop_time=issue.stop_time,
             total_time=issue.total_time,
-            hien_tuong=issue.hien_tuong,
-            nguyen_nhan=issue.nguyen_nhan,
-            khac_phuc=issue.khac_phuc,
+            symptom=issue.symptom,
+            cause=issue.cause,
+            solution=issue.solution,
             PIC=issue.pic,
             MachineName=machine_name_val,
             LineName=line_name_val,
@@ -284,7 +284,7 @@ async def create_issue(issue: IssueCreate, db: AsyncSession = Depends(get_db)):
 async def import_issue(data: IssueImportRequest, db: AsyncSession = Depends(get_db)):
     """
     Import a full Excel row — auto-creates Team, Line, Machine if not found.
-    If an issue with the same machine and symptom (hien_tuong) already exists,
+    If an issue with the same machine and symptom already exists,
     returns the existing issue with is_duplicate=True.
     """
     issue, team, line, machine, created_team, created_line, created_machine, is_duplicate = (

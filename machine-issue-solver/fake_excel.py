@@ -21,7 +21,7 @@ MACHINES = [f"Machine-{i:03d}" for i in range(1, 21)]  # Machine-001 to Machine-
 LOCATIONS = ["Zone A", "Zone B", "Zone C", "Building 1", "Building 2", None]
 SERIALS = [f"SN{random.randint(10000, 99999)}" for _ in range(30)] + [None] * 10
 
-HIEN_TUONG = [
+SYMPTOMS = [
     "Máy không khởi động được",
     "Băng tải bị kẹt",
     "Robot không pick đúng vị trí",
@@ -39,7 +39,7 @@ HIEN_TUONG = [
     "Lỗi chương trình",
 ]
 
-NGUYEN_NHAN = [
+CAUSES = [
     "Hỏng cảm biến vị trí",
     "Dây đai băng tải bị đứt",
     "Lỗi chương trình điều khiển",
@@ -52,7 +52,7 @@ NGUYEN_NHAN = [
     "Bảo trì không định kỳ",
 ]
 
-KHAC_PHUC = [
+SOLUTIONS = [
     "Thay cảm biến mới",
     "Thay dây đai, căn chỉnh lại",
     "Reload chương trình, calibrate",
@@ -87,9 +87,9 @@ def generate_excel(output_path: str, num_rows: int = 100):
     
     # Headers
     headers = [
-        "STT", "Line", "Team", "Machine", "Location", "Serial", 
+        "STT", "Line", "Team", "Machine", "Location", "Serial",
         "Date", "Start Time", "Stop Time", "Total Time", "Week", "Year",
-        "Hiện tượng", "Nguyên nhân", "Khắc phục", "PIC", "User Input"
+        "Symptom", "Cause", "Solution", "PIC", "User Input"
     ]
     ws.append(headers)
     
@@ -112,9 +112,9 @@ def generate_excel(output_path: str, num_rows: int = 100):
             f"{random.randint(5, 180)} min",  # Total Time
             date_obj.isocalendar()[1],  # Week
             date_obj.year,  # Year
-            random.choice(HIEN_TUONG),
-            random.choice(NGUYEN_NHAN),
-            random.choice(KHAC_PHUC),
+            random.choice(SYMPTOMS),
+            random.choice(CAUSES),
+            random.choice(SOLUTIONS),
             random.choice(PICS),
             fake.sentence(),
         ]

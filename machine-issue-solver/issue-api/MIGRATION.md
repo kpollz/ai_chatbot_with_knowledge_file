@@ -29,7 +29,7 @@ Field names in API remain CamelCase:
 - `TeamID`, `TeamName`
 - `LineID`, `LineName`  
 - `MachineID`, `MachineName`, `Location`, `Serial`
-- `IssueID`, `hien_tuong`, `nguyen_nhan`, etc.
+- `IssueID`, `symptom`, `cause`, `solution`, etc.
 
 ## Running with Docker
 

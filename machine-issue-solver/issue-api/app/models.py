@@ -6,7 +6,7 @@ Schema:
   - lines (id, team_id, name, created_at)  
   - machines (id, line_id, name, location, serial, created_at)
   - issues (id, machine_id, date, start_time, stop_time, total_time, week, year,
-            hien_tuong, nguyen_nhan, khac_phuc, pic, user_input, created_at)
+            symptom, cause, solution, pic, user_input, created_at)
 """
 
 from datetime import datetime
@@ -89,9 +89,9 @@ class Issue(Base):
     total_time = Column(String(50), nullable=True)
     week = Column(Integer, nullable=True)
     year = Column(Integer, nullable=True)
-    hien_tuong = Column(Text, nullable=True)      # Hiện tượng (Symptom)
-    nguyen_nhan = Column(Text, nullable=True)     # Nguyên nhân (Cause)
-    khac_phuc = Column(Text, nullable=True)       # Khắc phục (Solution)
+    symptom = Column(Text, nullable=True)         # Hiện tượng (Symptom)
+    cause = Column(Text, nullable=True)           # Nguyên nhân (Cause)
+    solution = Column(Text, nullable=True)        # Khắc phục (Solution)
     pic = Column(String(255), nullable=True)      # PIC
     user_input = Column(Text, nullable=True)      # User Input
     
@@ -103,7 +103,7 @@ class Issue(Base):
     # Indexes
     __table_args__ = (
         Index('idx_issues_machine', 'machine_id'),
-        Index('idx_issues_machine_hien_tuong', 'machine_id', 'hien_tuong'),  # For duplicate check
+        Index('idx_issues_machine_symptom', 'machine_id', 'symptom'),  # For duplicate check
     )
 
     def __repr__(self):

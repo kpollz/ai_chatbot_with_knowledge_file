@@ -209,7 +209,7 @@ with tab_browse:
         # Reorder and select columns for display
         display_cols = [
             "IssueID", "MachineName", "Date", "start_time", "stop_time", "total_time",
-            "Week", "Year", "hien_tuong", "nguyen_nhan", "khac_phuc", "PIC", "user_input",
+            "Week", "Year", "symptom", "cause", "solution", "PIC", "user_input",
         ]
         available_cols = [c for c in display_cols if c in df.columns]
         df_display = df[available_cols].copy()
@@ -217,9 +217,9 @@ with tab_browse:
         # Rename for display
         df_display = df_display.rename(columns={
             "MachineName": "Máy",
-            "hien_tuong": "Hiện tượng",
-            "nguyen_nhan": "Nguyên nhân",
-            "khac_phuc": "Khắc phục",
+            "symptom": "Hiện tượng",
+            "cause": "Nguyên nhân",
+            "solution": "Khắc phục",
             "start_time": "Bắt đầu",
             "stop_time": "Kết thúc",
             "total_time": "Tổng TG",
@@ -291,9 +291,9 @@ with tab_create:
 
     with st.container(border=True):
         st.markdown("**Nội dung vấn đề**")
-        hien_tuong = st.text_area("Hiện tượng (Symptom) *", placeholder="Mô tả hiện tượng lỗi...", key="create_hien_tuong")
-        nguyen_nhan = st.text_area("Nguyên nhân (Cause) *", placeholder="Nguyên nhân gốc rễ...", key="create_nguyen_nhan")
-        khac_phuc = st.text_area("Khắc phục (Solution) *", placeholder="Cách khắc phục...", key="create_khac_phuc")
+        symptom = st.text_area("Hiện tượng (Symptom) *", placeholder="Mô tả hiện tượng lỗi...", key="create_symptom")
+        cause = st.text_area("Nguyên nhân (Cause) *", placeholder="Nguyên nhân gốc rễ...", key="create_cause")
+        solution = st.text_area("Khắc phục (Solution) *", placeholder="Cách khắc phục...", key="create_solution")
 
     user_input_val = st.text_input("User Input / Ghi chú thêm", placeholder="Thông tin bổ sung...", key="create_user_input")
 
@@ -305,7 +305,7 @@ with tab_create:
     preview_result = None
     with col_check:
         if st.button("🔍 Kiểm tra & Xem trước", type="secondary", use_container_width=True):
-            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not hien_tuong.strip() or not nguyen_nhan.strip() or not khac_phuc.strip():
+            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not symptom.strip() or not cause.strip() or not solution.strip():
                 st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
             else:
                 preview_result = check_team_line_machine(
@@ -333,7 +333,7 @@ with tab_create:
 
     with col_create:
         if st.button("➕ Tạo Issue", type="primary", use_container_width=True):
-            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not hien_tuong.strip() or not nguyen_nhan.strip() or not khac_phuc.strip():
+            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not symptom.strip() or not cause.strip() or not solution.strip():
                 st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
             else:
                 try:
@@ -349,9 +349,9 @@ with tab_create:
                         "total_time": total_time.strip() if total_time else None,
                         "Week": week,
                         "Year": year,
-                        "hien_tuong": hien_tuong.strip() if hien_tuong else None,
-                        "nguyen_nhan": nguyen_nhan.strip() if nguyen_nhan else None,
-                        "khac_phuc": khac_phuc.strip() if khac_phuc else None,
+                        "symptom": symptom.strip() if symptom else None,
+                        "cause": cause.strip() if cause else None,
+                        "solution": solution.strip() if solution else None,
                         "PIC": pic.strip() if pic else None,
                         "user_input": user_input_val.strip() if user_input_val else None,
                     }
@@ -421,9 +421,9 @@ with tab_edit:
                     year = st.number_input("Year", min_value=2020, max_value=2030, value=issue.get("Year"))
                     pic = st.text_input("PIC", value=issue.get("PIC") or "")
 
-                hien_tuong = st.text_area("Hiện tượng", value=issue.get("hien_tuong") or "")
-                nguyen_nhan = st.text_area("Nguyên nhân", value=issue.get("nguyen_nhan") or "")
-                khac_phuc = st.text_area("Khắc phục", value=issue.get("khac_phuc") or "")
+                symptom = st.text_area("Hiện tượng", value=issue.get("symptom") or "")
+                cause = st.text_area("Nguyên nhân", value=issue.get("cause") or "")
+                solution = st.text_area("Khắc phục", value=issue.get("solution") or "")
                 user_input_val = st.text_input("User Input", value=issue.get("user_input") or "")
 
                 col_save, col_delete = st.columns(2)
@@ -440,9 +440,9 @@ with tab_edit:
                         "total_time": total_time or None,
                         "Week": week,
                         "Year": year,
-                        "hien_tuong": hien_tuong or None,
-                        "nguyen_nhan": nguyen_nhan or None,
-                        "khac_phuc": khac_phuc or None,
+                        "symptom": symptom or None,
+                        "cause": cause or None,
+                        "solution": solution or None,
                         "PIC": pic or None,
                         "user_input": user_input_val or None,
                     }

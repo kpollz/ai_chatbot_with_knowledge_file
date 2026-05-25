@@ -296,17 +296,17 @@ async def create_issue(db: AsyncSession, issue: IssueCreate) -> Issue:
 
 
 async def find_existing_issue(
-    db: AsyncSession, 
-    machine_id: int, 
-    hien_tuong: Optional[str]
+    db: AsyncSession,
+    machine_id: int,
+    symptom: Optional[str]
 ) -> Optional[Issue]:
     """Check if an issue with same machine and symptom already exists."""
-    if not hien_tuong:
+    if not symptom:
         return None
     result = await db.execute(
         select(Issue).where(
             Issue.machine_id == machine_id,
-            func.lower(Issue.hien_tuong) == func.lower(hien_tuong)
+            func.lower(Issue.symptom) == func.lower(symptom)
         )
     )
     return result.scalars().first()
@@ -354,7 +354,7 @@ async def import_issue(
         created_machine = True
 
     # 4. Check for duplicate issue (same machine + same symptom)
-    existing_issue = await find_existing_issue(db, machine.id, data.hien_tuong)
+    existing_issue = await find_existing_issue(db, machine.id, data.symptom)
     if existing_issue:
         is_duplicate = True
         return existing_issue, team, line, machine, created_team, created_line, created_machine, is_duplicate
@@ -379,9 +379,9 @@ async def import_issue(
         "total_time": data.total_time,
         "week": data.week,
         "year": data.year,
-        "hien_tuong": data.hien_tuong,
-        "nguyen_nhan": data.nguyen_nhan,
-        "khac_phuc": data.khac_phuc,
+        "symptom": data.symptom,
+        "cause": data.cause,
+        "solution": data.solution,
         "pic": data.pic,
         "user_input": data.user_input,
     }

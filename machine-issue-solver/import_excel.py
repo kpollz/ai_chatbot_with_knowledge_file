@@ -43,9 +43,9 @@ COLUMN_MAP = {
     9: "total_time",     # Total Time
     10: "Week",          # Week (int)
     11: "Year",          # Year (int)
-    12: "hien_tuong",    # Hiện tượng
-    13: "nguyen_nhan",   # Nguyên nhân
-    14: "khac_phuc",     # Khắc phục
+    12: "symptom",      # Hiện tượng
+    13: "cause",         # Nguyên nhân
+    14: "solution",      # Khắc phục
     15: "PIC",           # PIC
     16: "user_input",    # User Input
 }
@@ -167,7 +167,7 @@ def import_excel(excel_path: str, api_url: str, sheet_name_or_idx=0,
 
         if dry_run:
             print(f"  Row {row_idx}: {data.get('LineName')} / {data.get('TeamName')} / "
-                  f"{data.get('MachineName')} — {data.get('hien_tuong', '')[:50]}")
+                  f"{data.get('MachineName')} — {data.get('symptom', '')[:50]}")
             success += 1
             continue
 
@@ -189,7 +189,7 @@ def import_excel(excel_path: str, api_url: str, sheet_name_or_idx=0,
 
                 if dry_run:
                     print(f"  Row {row_idx}: {data.get('LineName')} / {data.get('TeamName')} / "
-                          f"{data.get('MachineName')} — {data.get('hien_tuong', '')[:50]}")
+                          f"{data.get('MachineName')} — {data.get('symptom', '')[:50]}")
                     success += 1
                     continue
 

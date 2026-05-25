@@ -106,9 +106,9 @@ def format_issues_for_scratchpad(issues: List[Dict]) -> str:
     for i, issue in enumerate(issues, 1):
         lines.append(f"Vấn đề {i}:")
         lines.append(f"  ID: {issue.get('IssueID', 'N/A')}")
-        lines.append(f"  Hiện tượng (Symptom): {issue.get('hien_tuong', 'N/A')}")
-        lines.append(f"  Nguyên Nhân (Cause): {issue.get('nguyen_nhan', 'N/A')}")
-        lines.append(f"  Khắc phục (Solution): {issue.get('khac_phuc', 'N/A')}")
+        lines.append(f"  Hiện tượng (Symptom): {issue.get('symptom', 'N/A')}")
+        lines.append(f"  Nguyên Nhân (Cause): {issue.get('cause', 'N/A')}")
+        lines.append(f"  Khắc phục (Solution): {issue.get('solution', 'N/A')}")
         lines.append(f"  PIC: {issue.get('PIC', 'N/A')}")
         lines.append("")
     return "\n".join(lines)

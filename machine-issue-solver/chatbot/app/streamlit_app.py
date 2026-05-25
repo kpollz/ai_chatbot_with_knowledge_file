@@ -99,9 +99,9 @@ for i, message in enumerate(st.session_state.messages):
             with st.expander(f"📚 Found {len(issues)} related issues", expanded=False):
                 for j, issue in enumerate(issues, 1):
                     st.markdown(f"**Issue #{issue.get('IssueID', 'N/A')}**")
-                    st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
-                    st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
-                    st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                    st.markdown(f"- **Hiện tượng:** {issue.get('symptom', 'N/A')}")
+                    st.markdown(f"- **Nguyên nhân:** {issue.get('cause', 'N/A')}")
+                    st.markdown(f"- **Khắc phục:** {issue.get('solution', 'N/A')}")
                     st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
                     st.divider()
         # Feedback widget for assistant messages
@@ -215,9 +215,9 @@ if st.session_state.processing and st.session_state.pending_query:
             with st.expander(f"📚 Found {len(issues_found)} related issues", expanded=False):
                 for j, issue in enumerate(issues_found, 1):
                     st.markdown(f"**Issue #{issue.get('IssueID', 'N/A')}**")
-                    st.markdown(f"- **Hiện tượng:** {issue.get('hien_tuong', 'N/A')}")
-                    st.markdown(f"- **Nguyên nhân:** {issue.get('nguyen_nhan', 'N/A')}")
-                    st.markdown(f"- **Khắc phục:** {issue.get('khac_phuc', 'N/A')}")
+                    st.markdown(f"- **Hiện tượng:** {issue.get('symptom', 'N/A')}")
+                    st.markdown(f"- **Nguyên nhân:** {issue.get('cause', 'N/A')}")
+                    st.markdown(f"- **Khắc phục:** {issue.get('solution', 'N/A')}")
                     st.markdown(f"- **PIC:** {issue.get('PIC', 'N/A')}")
                     st.divider()
 
