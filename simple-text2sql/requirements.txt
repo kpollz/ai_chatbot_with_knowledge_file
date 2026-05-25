@@ -1,5 +1,0 @@
-langchain-core
-pydantic
-requests
-python-dotenv
-streamlit
