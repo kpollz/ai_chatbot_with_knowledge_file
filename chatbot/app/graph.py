@@ -17,7 +17,6 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langfuse import observe, propagate_attributes, get_client
-from langfuse_setup import update_current_observation_safe
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
 from api_client import search_issues_sync
@@ -122,11 +121,11 @@ def _build_agent_messages(query: str, history: List[Dict[str, str]],
     history_text = format_history_for_prompt(history)
     if history_text:
         parts.append(history_text)
-    parts.append(f"Câu hỏi hiện tại của người dùng: {query}")
+    parts.append(f"Câu hỏi hiện tại của ngườii dùng: {query}")
     if scratchpad:
         parts.append(
             f"\n{scratchpad}\n"
-            "Dựa trên kết quả tool ở trên, hãy trả lời người dùng chi tiết và hữu ích. "
+            "Dựa trên kết quả tool ở trên, hãy trả lờii ngườii dùng chi tiết và hữu ích. "
             "KHÔNG gọi thêm tool nếu không cần thiết."
         )
     user_prompt = "\n\n".join(parts)
@@ -209,43 +208,29 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                        session_id: str = None, user_id: str = None):
     """
     Streaming generator yielding event dicts for Streamlit rendering.
-    
-    Creates ONE Langfuse Trace per query with nested spans.
-    
-    Langfuse v4: session_id and user_id are propagated via propagate_attributes()
-    context manager so all nested @observe calls inherit these attributes.
+
+    transform_to_string merges all chunk events into a single string for
+    Langfuse output, so yielded events are not logged individually.
+
+    Nested @observe calls (tool_execution, llm_generate) still attach to the
+    active trace via propagate_attributes().
 
     Event types:
       {"type": "status", "message": "..."}  — progress indicator for UI
       {"type": "chunk",  "text": "..."}     — text chunk to append to response
-
-    Flow:
-      1st LLM call: prefix-buffer (~20 chars) to detect ৩
-        → Tool: show status, execute, stream 2nd call with status
-        → No tool: flush buffer, stream remaining chunks
     """
     logger.info(f"Processing query (streaming): {query}")
     history = history or []
-    
+
     # Langfuse v4: propagate session_id and user_id to all nested observations
     propagate_kwargs = {}
     if session_id:
         propagate_kwargs["session_id"] = session_id
     if user_id:
         propagate_kwargs["user_id"] = user_id
-    
+
     scratchpad = ""
     all_issues = []
-    streamed_response_parts: List[str] = []
-
-    def _finalize_stream_output() -> None:
-        """Join streamed chunks and update the Langfuse observation with the full output."""
-        full_output = "".join(streamed_response_parts)
-        if full_output.strip():
-            try:
-                update_current_observation_safe(output=full_output)
-            except Exception as lf_err:
-                logger.debug(f"Langfuse output update skipped: {lf_err}")
 
     llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
 
@@ -257,7 +242,7 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     except Exception as lf_err:
         logger.debug(f"Langfuse propagate_attributes skipped: {lf_err}")
         _attr_ctx = nullcontext()
-    
+
     with _attr_ctx:
         try:
             # Capture trace_id for feedback scoring
@@ -295,13 +280,11 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                                 elif len(prefix) >= PREFIX_BUFFER_SIZE:
                                     prefix_done = True
                                     for buf_text in buffer:
-                                        streamed_response_parts.append(buf_text)
                                         yield {"type": "chunk", "text": buf_text}
                                     buffer = None
                             elif is_tool:
                                 buffer.append(text)
                             else:
-                                streamed_response_parts.append(text)
                                 yield {"type": "chunk", "text": text}
 
                     # Handle end-of-stream for first call
@@ -329,42 +312,38 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                             # Tool prefix detected but JSON parse failed — yield as text
                             logger.warning("Tool prefix detected but JSON parse failed, yielding as text")
                             for buf_text in buffer:
-                                streamed_response_parts.append(buf_text)
                                 yield {"type": "chunk", "text": buf_text}
                     elif buffer:
                         # Very short response (< PREFIX_BUFFER_SIZE), not flushed yet
                         for buf_text in buffer:
-                            streamed_response_parts.append(buf_text)
                             yield {"type": "chunk", "text": buf_text}
 
                     # Direct answer (or parse failure) — done
-                    _finalize_stream_output()
                     if result is not None:
                         result.issues = all_issues
                     return
 
                 else:
                     # --- After tools: stream directly (no tool-call re-check) ---
-                    yield {"type": "status", "message": "Đang viết câu trả lời..."}
+                    yield {"type": "status", "message": "Đang viết câu trả lờii..."}
 
                     with Timer("LLM streaming call (final)"):
                         for ai_chunk in llm.stream(messages):
                             text = ai_chunk.content
                             if text:
-                                streamed_response_parts.append(text)
                                 yield {"type": "chunk", "text": text}
 
-                    _finalize_stream_output()
                     if result is not None:
                         result.issues = all_issues
                     return
 
             # Exhausted iterations
-            _finalize_stream_output()
             if result is not None:
                 result.issues = all_issues
+            return
 
         except Exception as e:
             logger.error(f"Streaming error: {e}")
             if result is not None:
                 result.error = str(e)
+            return

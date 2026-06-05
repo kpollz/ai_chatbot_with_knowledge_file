@@ -26,8 +26,11 @@ SCORE_STAR_MAP = {2: 0, 4: 1, 6: 2, 8: 3, 10: 4}
 
 def submit_feedback_to_langfuse(trace_id: str, score: int, opinion: str = "",
                                  best_answer: str = "", is_harmful: bool = False,
-                                 is_best: bool = False) -> bool:
-    """Submit user feedback as a Langfuse score on the trace."""
+                                 is_best: bool = False, score_id: str = None) -> bool:
+    """Submit user feedback as a Langfuse score on the trace.
+
+    Uses score_id as an idempotency key so the same score can be updated.
+    """
     if not trace_id:
         logger.warning("Cannot submit feedback: no trace_id")
         return False
@@ -42,12 +45,15 @@ def submit_feedback_to_langfuse(trace_id: str, score: int, opinion: str = "",
         comment_str = json.dumps(comment_data, ensure_ascii=False)
 
         client = get_client()
-        client.create_score(
-            trace_id=trace_id,
-            name="user-feedback",
-            value=score,
-            comment=comment_str,
-        )
+        kwargs = {
+            "trace_id": trace_id,
+            "name": "user-feedback",
+            "value": score,
+            "comment": comment_str,
+        }
+        if score_id:
+            kwargs["score_id"] = score_id
+        client.create_score(**kwargs)
         logger.info(f"Feedback submitted: score={score}, trace_id={trace_id[:16]}...")
         return True
     except Exception as e:
@@ -65,7 +71,7 @@ def _get_form_fields(score: int) -> dict:
 
 
 @st.dialog("📝 Chỉnh sửa đánh giá")
-def _feedback_dialog(current_score: int, trace_id: str, msg_index: int):
+def _feedback_dialog(current_score: int, trace_id: str, msg_index: int, score_id: str = None):
     """Modal dialog for users to change the default 10/10 rating."""
     stars_key = f"fb_dialog_stars_{msg_index}"
 
@@ -135,6 +141,7 @@ def _feedback_dialog(current_score: int, trace_id: str, msg_index: int):
             best_answer=best_answer,
             is_harmful=is_harmful,
             is_best=is_best,
+            score_id=score_id,
         )
         if success:
             st.session_state[f"fb_submitted_{msg_index}"] = True
@@ -153,11 +160,14 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
     auto_key = f"fb_auto_submitted_{msg_index}"
 
     # Auto-submit a default 10/10 score once per message
+    score_id = st.session_state.get(f"fb_score_id_{msg_index}")
     if (
         not st.session_state.get(submitted_key)
         and trace_id
         and not st.session_state.get(auto_key)
     ):
+        # Use a deterministic score_id so updates replace the default score
+        score_id = f"{trace_id}-feedback"
         success = submit_feedback_to_langfuse(
             trace_id=trace_id,
             score=10,
@@ -165,11 +175,13 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
             best_answer="",
             is_harmful=False,
             is_best=True,
+            score_id=score_id,
         )
         if success:
             st.session_state[auto_key] = True
             st.session_state[submitted_key] = True
             st.session_state[score_key] = 10
+            st.session_state[f"fb_score_id_{msg_index}"] = score_id
 
     submitted = st.session_state.get(submitted_key, False)
     score = st.session_state.get(score_key, 10)
@@ -223,4 +235,5 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
             current_score=dialog_score,
             trace_id=trace_id or "",
             msg_index=msg_index,
+            score_id=st.session_state.get(f"fb_score_id_{msg_index}"),
         )
