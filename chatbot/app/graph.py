@@ -198,7 +198,12 @@ class StreamResult:
         self.trace_id: Optional[str] = None
 
 
-@observe(name="agent_solve_issue")
+@observe(
+    name="agent_solve_issue",
+    transform_to_string=lambda events: "".join(
+        e.get("text", "") for e in events if isinstance(e, dict) and e.get("type") == "chunk"
+    ),
+)
 def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                        api_key: str = "", result: Optional[StreamResult] = None,
                        session_id: str = None, user_id: str = None):
