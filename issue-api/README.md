@@ -14,20 +14,26 @@ Chatbot (HTTP client)
   └── GET/POST/PUT/DELETE /issues/...                   ← Streamlit CRUD page
         │
         ▼
-  FastAPI (async) ──► SQLAlchemy (async) ──► SQLite (aiosqlite)
+  FastAPI (async) ──► SQLAlchemy (async) ──► PostgreSQL (asyncpg)
 ```
 
 ## Database Schema
 
 ```
-Lines (LineID, LineName)
-  └── Teams (TeamID, TeamName, LineID)
-        └── Machines (MachineID, MachineName, Location, Serial, TeamID)
-              └── Issues (IssueID, MachineID, Date, Start Time, Total Time,
-                          Week, Year, Hiện tượng, Nguyên nhân, Khắc phục, PIC, User Input)
+Team (id, name)
+  └── Line (id, team_id, line_number)
+        └── Machine (id, line_id, name, location, serial)
+              └── Issue (id, machine_id, date, start_time, stop_time, total_time,
+                          week, year, symptom, cause, solution, pic, user_input)
 ```
 
 ## API Endpoints
+
+### Teams (read-only)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/teams/` | List all teams |
+| `GET` | `/teams/{id}` | Get a specific team |
 
 ### Lines (read-only)
 | Method | Path | Description |
@@ -41,13 +47,14 @@ Lines (LineID, LineName)
 | `GET` | `/machines/` | List all machines |
 | `GET` | `/machines/{id}` | Get a specific machine |
 
-### Issues (full CRUD)
+### Issues (full CRUD + import)
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/issues/` | List issues (supports `skip` and `limit` query params) |
+| `GET` | `/issues/` | List issues (supports `skip` and `limit`) |
 | `GET` | `/issues/search` | Search by `machine_name` + `line_name` (used by chatbot) |
 | `GET` | `/issues/{id}` | Get a specific issue |
 | `POST` | `/issues/` | Create a new issue |
+| `POST` | `/issues/import` | Import issue (auto-creates Team/Line/Machine) |
 | `PUT` | `/issues/{id}` | Update an existing issue |
 | `DELETE` | `/issues/{id}` | Delete an issue |
 
@@ -62,16 +69,18 @@ Lines (LineID, LineName)
 issue-api/
 ├── app/
 │   ├── main.py       # FastAPI entry point + CORS middleware
-│   ├── config.py     # Environment configuration (DB_PATH, host, port)
+│   ├── config.py     # Environment configuration
 │   ├── database.py   # Async SQLAlchemy engine + session factory
-│   ├── models.py     # ORM models: Line, Team, Machine, Issue
+│   ├── models.py     # ORM models: Team, Line, Machine, Issue
 │   ├── schemas.py    # Pydantic request/response schemas
 │   ├── crud.py       # Async CRUD operations
 │   └── routes.py     # REST endpoint definitions
-├── database/
-│   └── .gitkeep      # Place issues.db here
+├── postgres_data/    # Docker PostgreSQL volume
 ├── .env.example
-└── requirements.txt
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+└── README.md
 ```
 
 ## Setup
@@ -82,17 +91,38 @@ pip install -r requirements.txt
 cp .env.example .env  # Edit if needed
 ```
 
-Place your SQLite database file at `database/issues.db`.
-
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DB_PATH` | Path to SQLite database file | `./database/issues.db` |
+| `DATABASE_URL` | PostgreSQL connection URL (asyncpg) | `postgresql+asyncpg://postgres:postgres@localhost:5432/issue_api` |
+| `DB_USER` | PostgreSQL user (for Docker) | `postgres` |
+| `DB_PASSWORD` | PostgreSQL password (for Docker) | `postgres` |
+| `DB_NAME` | PostgreSQL database name (for Docker) | `issue_api` |
+| `DB_PORT` | PostgreSQL port (for Docker) | `5432` |
 | `API_HOST` | Server bind address | `0.0.0.0` |
 | `API_PORT` | Server port | `8888` |
 
 ## Run
+
+### With Docker (recommended)
+
+```bash
+# Start PostgreSQL + API
+docker-compose up -d
+
+# View logs
+docker-compose logs -f api
+
+# Stop
+docker-compose down
+
+# Reset database (delete all data)
+docker-compose down -v
+docker-compose up -d
+```
+
+### Locally
 
 ```bash
 cd app
@@ -106,3 +136,14 @@ uvicorn app.main:app --host 0.0.0.0 --port 8888 --reload
 ```
 
 API docs available at `http://localhost:8888/docs` (Swagger UI).
+
+## Data Import
+
+Use the root-level `import_excel.py` script to bulk-import factory data:
+
+```bash
+cd ..
+python import_excel.py data.xlsx --api-url http://localhost:8888
+```
+
+The import endpoint auto-creates missing Team, Line, Machine records and skips duplicate issues (same machine + symptom).

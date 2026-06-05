@@ -17,6 +17,7 @@ import re
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langfuse import observe, propagate_attributes, get_client
+from langfuse_setup import update_current_observation_safe
 from config import LLM_MODEL, LLM_TEMPERATURE
 from company_chat_model import get_company_llm
 from api_client import search_issues_sync
@@ -230,6 +231,16 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     
     scratchpad = ""
     all_issues = []
+    streamed_response_parts: List[str] = []
+
+    def _finalize_stream_output() -> None:
+        """Join streamed chunks and update the Langfuse observation with the full output."""
+        full_output = "".join(streamed_response_parts)
+        if full_output.strip():
+            try:
+                update_current_observation_safe(output=full_output)
+            except Exception as lf_err:
+                logger.debug(f"Langfuse output update skipped: {lf_err}")
 
     llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
 
@@ -279,11 +290,13 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                                 elif len(prefix) >= PREFIX_BUFFER_SIZE:
                                     prefix_done = True
                                     for buf_text in buffer:
+                                        streamed_response_parts.append(buf_text)
                                         yield {"type": "chunk", "text": buf_text}
                                     buffer = None
                             elif is_tool:
                                 buffer.append(text)
                             else:
+                                streamed_response_parts.append(text)
                                 yield {"type": "chunk", "text": text}
 
                     # Handle end-of-stream for first call
@@ -311,13 +324,16 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                             # Tool prefix detected but JSON parse failed — yield as text
                             logger.warning("Tool prefix detected but JSON parse failed, yielding as text")
                             for buf_text in buffer:
+                                streamed_response_parts.append(buf_text)
                                 yield {"type": "chunk", "text": buf_text}
                     elif buffer:
                         # Very short response (< PREFIX_BUFFER_SIZE), not flushed yet
                         for buf_text in buffer:
+                            streamed_response_parts.append(buf_text)
                             yield {"type": "chunk", "text": buf_text}
 
                     # Direct answer (or parse failure) — done
+                    _finalize_stream_output()
                     if result is not None:
                         result.issues = all_issues
                     return
@@ -330,13 +346,16 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
                         for ai_chunk in llm.stream(messages):
                             text = ai_chunk.content
                             if text:
+                                streamed_response_parts.append(text)
                                 yield {"type": "chunk", "text": text}
 
+                    _finalize_stream_output()
                     if result is not None:
                         result.issues = all_issues
                     return
 
             # Exhausted iterations
+            _finalize_stream_output()
             if result is not None:
                 result.issues = all_issues
 

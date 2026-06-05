@@ -208,7 +208,7 @@ with tab_browse:
 
         # Reorder and select columns for display
         display_cols = [
-            "IssueID", "MachineName", "Date", "start_time", "stop_time", "total_time",
+            "IssueID", "LineName", "MachineName", "Date", "start_time", "stop_time", "total_time",
             "Week", "Year", "symptom", "cause", "solution", "PIC", "user_input",
         ]
         available_cols = [c for c in display_cols if c in df.columns]
@@ -216,6 +216,7 @@ with tab_browse:
 
         # Rename for display
         df_display = df_display.rename(columns={
+            "LineName": "Line",
             "MachineName": "Máy",
             "symptom": "Hiện tượng",
             "cause": "Nguyên nhân",

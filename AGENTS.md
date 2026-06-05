@@ -49,7 +49,9 @@ machine-issue-solver/
 │   │   ├── config.py           # Environment configuration
 │   │   ├── history.py          # Token estimation & context window management
 │   │   ├── conversation_store.py  # JSON file storage for conversations
+│   │   ├── feedback.py         # Default-10 feedback widget + Langfuse scores
 │   │   ├── logger.py           # Logging + Timer context manager
+│   │   ├── langfuse_setup.py   # Langfuse SDK v4 utilities
 │   │   └── pages/
 │   │       └── 1_Issues.py     # Issue CRUD management page
 │   ├── .env.example            # Template for environment variables
@@ -189,7 +191,9 @@ cd chatbot && streamlit run app/streamlit_app.py
 | `config.py` | Centralized environment variable loading, model registry |
 | `history.py` | Token estimation and context window management |
 | `conversation_store.py` | JSON persistence for chat sessions in `conversations/` directory |
+| `feedback.py` | Default-10 star feedback widget; submits scores to Langfuse |
 | `logger.py` | Logging configuration and Timer context manager |
+| `langfuse_setup.py` | Langfuse SDK v4 utilities (flush, update observation/generation) |
 | `pages/1_Issues.py` | Issue CRUD management UI (separate Streamlit page) |
 
 ### Issue API Module Responsibilities
@@ -248,6 +252,7 @@ Máy CNC-01 trên Line 2 có các vấn đề...▌  ← Streaming text
 - Prefix-buffer (20 chars) detects `<tool_call>` in first response chunk
 - Status updates show agent progress
 - Event types: `{"type": "status", "message": "..."}` or `{"type": "chunk", "text": "..."}`
+- After streaming completes, the full assistant response is written to the current Langfuse observation as a single output (instead of per-chunk logs)
 
 ### Token Estimation
 
@@ -257,6 +262,10 @@ Context window management uses character-based approximation:
 - Conservative estimate: ~3 chars/token
 
 Warning at 100K tokens, blocking at 128K tokens.
+
+### Feedback
+
+Responses are auto-scored **10/10** by default and submitted to Langfuse as a `user-feedback` score. Users can click "Sửa" to lower the score; the latest score is stored in session state and sent to Langfuse.
 
 ## Development Conventions
 
