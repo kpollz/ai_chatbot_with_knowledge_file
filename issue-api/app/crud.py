@@ -251,6 +251,17 @@ async def get_issue(db: AsyncSession, issue_id: int) -> Optional[Issue]:
     return result.scalar_one_or_none()
 
 
+async def get_symptoms_by_machine(db: AsyncSession, machine_id: int) -> List[str]:
+    """Get distinct symptoms recorded for a machine (for symptom dropdown)."""
+    result = await db.execute(
+        select(Issue.symptom)
+        .where(Issue.machine_id == machine_id, Issue.symptom.isnot(None))
+        .distinct()
+        .order_by(Issue.symptom)
+    )
+    return [row[0] for row in result.all()]
+
+
 async def search_issues(
     db: AsyncSession,
     machine_name: str,

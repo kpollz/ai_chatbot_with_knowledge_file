@@ -12,7 +12,7 @@ requests
 # Utilities
 python-dotenv
 pydantic
-streamlit
+streamlit>=1.45  # accept_new_options cho selectbox (dropdown + gõ mới)
 
 # Langfuse Tracing (v4)
 langfuse>=4.0.0
