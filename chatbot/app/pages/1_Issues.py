@@ -17,6 +17,7 @@ from api_client import (
     import_issue_sync,
     get_teams_sync, get_lines_sync, get_machines_sync,
     find_team_by_name_sync, find_line_by_name_sync, find_machine_by_details_sync,
+    get_symptoms_sync,
 )
 
 st.set_page_config(page_title="Issue Management", page_icon="📋", layout="wide")
@@ -46,6 +47,10 @@ def load_issues_page(skip: int, limit: int):
 def load_issues_count():
     return get_issues_count_sync()
 
+@st.cache_data(ttl=30)
+def load_symptoms(machine_id: int):
+    return get_symptoms_sync(machine_id)
+
 try:
     teams = load_teams()
     lines = load_lines()
@@ -58,8 +63,31 @@ except Exception as e:
 # Build lookup maps
 machine_options = {f"{m['MachineName']} (ID: {m['MachineID']})": m["MachineID"] for m in machines}
 machine_id_to_name = {m["MachineID"]: m["MachineName"] for m in machines}
+machine_id_to_line_id = {m["MachineID"]: m["LineID"] for m in machines}
 line_id_to_number = {l["LineID"]: l["LineName"] for l in lines}
+line_id_to_team_id = {l["LineID"]: l.get("TeamID") for l in lines}
+line_id_to_line = {l["LineID"]: l for l in lines}
 team_id_to_name = {t["TeamID"]: t["TeamName"] for t in teams}
+team_name_to_id = {t["TeamName"]: t["TeamID"] for t in teams}
+
+
+# ---- Cascade dropdown labels (stable, unambiguous across teams/lines) ----
+
+def _line_label(line: dict) -> str:
+    """Line 2 · Team A — line number is only unique within a team."""
+    team = team_id_to_name.get(line.get("TeamID"), "?")
+    return f"Line {line['LineName']} · {team}"
+
+def _machine_label(m: dict) -> str:
+    """CNC-01 [A2 / SN123] — Line 2 · Team A — machine name can repeat across lines."""
+    extra = " / ".join(x for x in [m.get("Location"), m.get("Serial")] if x)
+    line = line_id_to_line.get(m["LineID"])
+    suffix = f" — {_line_label(line)}" if line else ""
+    name = m["MachineName"]
+    return f"{name} [{extra}]{suffix}" if extra else f"{name}{suffix}"
+
+line_label_to_line = {_line_label(l): l for l in lines}
+machine_label_to_machine = {_machine_label(m): m for m in machines}
 
 
 # ---- Helper functions ----
@@ -201,8 +229,6 @@ with tab_browse:
 
         # Enrich with related names
         df["MachineName"] = df["MachineID"].map(machine_id_to_name)
-        # Map LineID from machines, then to line number
-        machine_id_to_line_id = {m["MachineID"]: m["LineID"] for m in machines}
         df["LineID"] = df["MachineID"].map(machine_id_to_line_id)
         df["LineName"] = df["LineID"].map(lambda x: line_id_to_number.get(x, "N/A"))
 
@@ -251,24 +277,106 @@ with tab_create:
     st.markdown("Nhập thông tin theo định dạng Excel. Hệ thống sẽ tự động kiểm tra và tạo Team/Line/Machine nếu chưa có.")
 
     with st.container(border=True):
-        st.markdown("**Thông tin định danh máy**")
+        st.markdown("**Thông tin định danh máy** — chọn Machine sẽ tự điền Line & Team; chọn Line sẽ tự điền Team. Gõ giá trị mới để tạo mới.")
+
+        # ---- Cascade callbacks (run before the rerun, so they may rewrite sibling widgets) ----
+
+        def _reset_machine_fields():
+            st.session_state.create_machine_sel = None
+            st.session_state.create_symptom_sel = None
+            st.session_state.create_location = ""
+            st.session_state.create_serial = ""
+
+        def _on_team_change():
+            team_val = st.session_state.create_team_sel
+            # Reset Line/Machine if they belong to another (existing) team
+            line = line_label_to_line.get(st.session_state.get("create_line_sel") or "")
+            if line and team_id_to_name.get(line.get("TeamID")) != team_val:
+                st.session_state.create_line_sel = None
+            m = machine_label_to_machine.get(st.session_state.get("create_machine_sel") or "")
+            if m and team_id_to_name.get(line_id_to_team_id.get(m["LineID"])) != team_val:
+                _reset_machine_fields()
+
+        def _on_line_change():
+            line = line_label_to_line.get(st.session_state.create_line_sel or "")
+            if line:
+                # Existing line → autofill Team
+                st.session_state.create_team_sel = team_id_to_name.get(line.get("TeamID"))
+                # Reset Machine if it belongs to another line
+                m = machine_label_to_machine.get(st.session_state.get("create_machine_sel") or "")
+                if m and m["LineID"] != line["LineID"]:
+                    _reset_machine_fields()
+
+        def _on_machine_change():
+            m = machine_label_to_machine.get(st.session_state.create_machine_sel or "")
+            if m:
+                # Existing machine → autofill Line + Team + Location/Serial
+                line = line_id_to_line.get(m["LineID"])
+                if line:
+                    st.session_state.create_line_sel = _line_label(line)
+                    st.session_state.create_team_sel = team_id_to_name.get(line.get("TeamID"))
+                st.session_state.create_location = m.get("Location") or ""
+                st.session_state.create_serial = m.get("Serial") or ""
+            else:
+                st.session_state.create_location = ""
+                st.session_state.create_serial = ""
+            # Machine đổi → phải chọn lại hiện tượng
+            st.session_state.create_symptom_sel = None
+
+        # ---- Options filtered top-down by current selection ----
+        _team_val = st.session_state.get("create_team_sel") or ""
+        _line_val = st.session_state.get("create_line_sel") or ""
+        _sel_team_id = team_name_to_id.get(_team_val)
+        _sel_line = line_label_to_line.get(_line_val)
+
+        team_opts = [t["TeamName"] for t in teams]
+        if _sel_team_id is not None:
+            line_opts = [_line_label(l) for l in lines if l.get("TeamID") == _sel_team_id]
+        elif _team_val:
+            line_opts = []  # Team gõ mới → chưa có Line nào, chỉ gõ mới
+        else:
+            line_opts = [_line_label(l) for l in lines]
+        if _sel_line:
+            machine_pool = [m for m in machines if m["LineID"] == _sel_line["LineID"]]
+        elif _line_val or (_team_val and _sel_team_id is None):
+            machine_pool = []  # Line/Team gõ mới → chưa có Machine nào, chỉ gõ mới
+        elif _sel_team_id is not None:
+            _team_line_ids = {l["LineID"] for l in lines if l.get("TeamID") == _sel_team_id}
+            machine_pool = [m for m in machines if m["LineID"] in _team_line_ids]
+        else:
+            machine_pool = machines
+        machine_opts = [_machine_label(m) for m in machine_pool]
+
         col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
         with col_t1:
-            # Team autocomplete from existing teams
-            team_names = [t["TeamName"] for t in teams] if teams else []
-            team_name = st.text_input("Team *", placeholder="VD: Team A", key="create_team_name")
-            if team_names and team_name:
-                matched = [n for n in team_names if team_name.lower() in n.lower()]
-                if matched:
-                    st.caption(f"💡 Gợi ý: {', '.join(matched[:3])}")
+            team_sel = st.selectbox(
+                "Team *", options=team_opts, index=None, accept_new_options=True,
+                placeholder="Chọn / gõ mới...", key="create_team_sel",
+                on_change=_on_team_change,
+            )
         with col_t2:
-            line_name = st.text_input("Line *", placeholder="VD: 2", key="create_line_name")
+            line_sel = st.selectbox(
+                "Line *", options=line_opts, index=None, accept_new_options=True,
+                placeholder="Chọn / gõ số mới...", key="create_line_sel",
+                on_change=_on_line_change,
+            )
         with col_t3:
-            machine_name = st.text_input("Machine *", placeholder="VD: CNC-01", key="create_machine_name")
+            machine_sel = st.selectbox(
+                "Machine *", options=machine_opts, index=None, accept_new_options=True,
+                placeholder="Chọn / gõ mới...", key="create_machine_sel",
+                on_change=_on_machine_change,
+            )
         with col_t4:
             location = st.text_input("Location", placeholder="VD: A2", key="create_location")
         with col_t5:
             serial = st.text_input("Serial", placeholder="VD: SN12345", key="create_serial")
+
+        # Derive plain names for the API (labels → names; typed new values pass through)
+        team_name = (team_sel or "").strip()
+        _line_obj = line_label_to_line.get(line_sel or "")
+        line_name = str(_line_obj["LineName"]) if _line_obj else (line_sel or "").strip()
+        _machine_obj = machine_label_to_machine.get(machine_sel or "")
+        machine_name = _machine_obj["MachineName"] if _machine_obj else (machine_sel or "").strip()
 
     with st.container(border=True):
         st.markdown("**Thời gian & Thông số**")
@@ -292,7 +400,28 @@ with tab_create:
 
     with st.container(border=True):
         st.markdown("**Nội dung vấn đề**")
-        symptom = st.text_area("Hiện tượng (Symptom) *", placeholder="Mô tả hiện tượng lỗi...", key="create_symptom")
+        # Symptom dropdown — chỉ mở khi đã chọn Machine.
+        # Machine có sẵn → options là các hiện tượng đã ghi nhận của máy đó; xóa lựa chọn và gõ để thêm mới.
+        symptom_opts = []
+        if _machine_obj:
+            try:
+                symptom_opts = load_symptoms(_machine_obj["MachineID"])
+            except Exception:
+                symptom_opts = []
+        symptom_sel = st.selectbox(
+            "Hiện tượng (Symptom) *",
+            options=symptom_opts,
+            index=None,
+            accept_new_options=True,
+            disabled=not machine_name,
+            placeholder="⛔ Chọn Machine trước" if not machine_name else "Chọn hiện tượng đã có hoặc gõ mới...",
+            key="create_symptom_sel",
+        )
+        if machine_name and _machine_obj and not symptom_opts:
+            st.caption("💡 Máy này chưa có hiện tượng nào trong hệ thống — gõ để thêm mới.")
+        elif machine_name and not _machine_obj:
+            st.caption("💡 Machine mới — gõ hiện tượng mới.")
+        symptom = (symptom_sel or "").strip()
         cause = st.text_area("Nguyên nhân (Cause) *", placeholder="Nguyên nhân gốc rễ...", key="create_cause")
         solution = st.text_area("Khắc phục (Solution) *", placeholder="Cách khắc phục...", key="create_solution")
 
@@ -306,8 +435,10 @@ with tab_create:
     preview_result = None
     with col_check:
         if st.button("🔍 Kiểm tra & Xem trước", type="secondary", use_container_width=True):
-            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not symptom.strip() or not cause.strip() or not solution.strip():
+            if not team_name or not line_name or not machine_name or not symptom or not cause.strip() or not solution.strip():
                 st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
+            elif not line_name.isdigit():
+                st.warning("Line phải là số (VD: 2 hoặc 02).")
             else:
                 preview_result = check_team_line_machine(
                     team_name, line_name, machine_name,
@@ -334,8 +465,10 @@ with tab_create:
 
     with col_create:
         if st.button("➕ Tạo Issue", type="primary", use_container_width=True):
-            if not team_name.strip() or not line_name.strip() or not machine_name.strip() or not symptom.strip() or not cause.strip() or not solution.strip():
+            if not team_name or not line_name or not machine_name or not symptom or not cause.strip() or not solution.strip():
                 st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
+            elif not line_name.isdigit():
+                st.warning("Line phải là số (VD: 2 hoặc 02).")
             else:
                 try:
                     data = {

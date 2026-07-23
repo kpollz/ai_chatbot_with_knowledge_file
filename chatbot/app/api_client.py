@@ -42,6 +42,11 @@ def get_issue_sync(issue_id: int) -> Dict:
     return _sync_request("GET", f"/issues/{issue_id}")
 
 
+def get_symptoms_sync(machine_id: int) -> List[str]:
+    """Distinct symptoms recorded for a machine — for the symptom dropdown."""
+    return _sync_request("GET", "/issues/symptoms", params={"machine_id": machine_id})
+
+
 def create_issue_sync(data: Dict) -> Dict:
     return _sync_request("POST", "/issues/", json_data=data)
 

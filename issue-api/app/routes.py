@@ -267,6 +267,15 @@ async def search_issues(
     ]
 
 
+@issue_router.get("/symptoms", response_model=List[str])
+async def list_symptoms(
+    machine_id: int = Query(..., description="Machine ID to list distinct symptoms for"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Distinct symptoms recorded for a machine — used by the symptom dropdown."""
+    return await crud.get_symptoms_by_machine(db, machine_id)
+
+
 @issue_router.get("/{issue_id}", response_model=IssueResponse)
 async def get_issue(issue_id: int, db: AsyncSession = Depends(get_db)):
     issue = await crud.get_issue(db, issue_id)

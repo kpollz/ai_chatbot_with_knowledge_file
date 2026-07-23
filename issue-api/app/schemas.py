@@ -59,6 +59,7 @@ class LineCreate(BaseModel):
 class LineResponse(BaseModel):
     id: int = Field(..., alias="LineID")
     line_number: int = Field(..., alias="LineName")
+    team_id: int = Field(..., alias="TeamID")
 
     model_config = {**_response_config, "populate_by_name": True}
 
