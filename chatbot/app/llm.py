@@ -1,12 +1,9 @@
 """
-LLM factory — returns a LangChain chat model based on LLM_PROVIDER.
+LLM factory — returns an OpenAI-compatible chat model
+(``langchain_openai.ChatOpenAI``) with native tool/function calling and token
+streaming.
 
-  - "openai"  : any OpenAI-compatible endpoint via langchain_openai.ChatOpenAI.
-                Supports native tool/function calling and token streaming.
-  - "company" : legacy proprietary Gauss wrapper (text-based tool calling).
-
-The heavy provider SDKs are imported lazily so importing this module never
-requires a provider that the current deployment does not use.
+Configure via ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` / ``OPENAI_MODEL``.
 """
 
 from typing import Optional
@@ -19,28 +16,17 @@ from logger import logger
 
 def get_chat_model(api_key: Optional[str] = None,
                    temperature: Optional[float] = None) -> BaseChatModel:
-    """Build the configured chat model.
+    """Build the OpenAI-compatible chat model.
 
     Args:
-        api_key: overrides the provider's configured key (e.g. the sidebar key).
+        api_key: overrides ``OPENAI_API_KEY`` (e.g. the sidebar key).
         temperature: overrides ``config.LLM_TEMPERATURE``.
     """
+    from langchain_openai import ChatOpenAI  # lazy import
+
     temp = config.LLM_TEMPERATURE if temperature is None else temperature
-    provider = (config.LLM_PROVIDER or "openai").lower()
-
-    if provider == "company":
-        from company_chat_model import get_company_llm  # lazy
-        return get_company_llm(
-            model=config.LLM_MODEL,
-            temperature=temp,
-            api_key=api_key or config.COMPANY_LLM_API_KEY,
-        )
-
-    # Default: OpenAI-compatible endpoint
-    from langchain_openai import ChatOpenAI  # lazy
-
     if not config.OPENAI_MODEL:
-        logger.warning("OPENAI_MODEL is empty — set it in the environment (LLM_PROVIDER=openai).")
+        logger.warning("OPENAI_MODEL is empty — set it in the environment.")
     if not config.OPENAI_BASE_URL:
         logger.warning("OPENAI_BASE_URL is empty — falling back to the default OpenAI host.")
 
