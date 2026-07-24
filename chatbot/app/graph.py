@@ -1,31 +1,36 @@
 """
-Machine Issue Solver — Streaming ReAct Agent (native tool calling)
+Machine Issue Solver — ReAct Agent (LangGraph prebuilt).
 
-Uses an OpenAI-compatible chat model with native function/tool calling
-(via LangChain ``bind_tools``). The model decides when to call a tool; tool
-calls arrive as structured data on the streamed ``AIMessageChunk`` — no more
-text/regex ``<tool_call>`` parsing.
+Uses ``langgraph.prebuilt.create_react_agent`` with an OpenAI-compatible
+``ChatOpenAI`` model and native tool calling — the standard ReAct loop is
+handled by LangGraph instead of a hand-rolled generator.
 
-Flow:
-  LLM stream → tool_calls? → YES: execute tool(s), append ToolMessage → LLM stream (final)
-                    ↓ NO
-             stream answer directly to user
+A contextvar recorder carries the tool's structured results (issues found) out
+of the graph so the UI can show the "related issues" panel and feedback, the
+same role the old side-channel played. The streaming event interface
+(``status`` / ``chunk`` dicts + ``StreamResult``) is unchanged, so the Streamlit
+chat page needs no edits.
+
+Langfuse: the ReAct run is traced via the LangChain CallbackHandler (adopted
+from the chat-with-documents project); an outer @observe span owns the trace_id
+that the (unchanged) feedback mechanism scores against.
 """
 
+import contextvars
 from typing import Optional, List, Dict
-from contextlib import nullcontext
-import json
 
-from langchain_core.messages import (
-    SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage,
-)
-from langfuse import observe, propagate_attributes, get_client
+from langchain_core.messages import AIMessageChunk
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langfuse import observe, get_client
 
 from llm import get_chat_model
+from langfuse_setup import langchain_handler, trace_attributes, flush_langfuse
 from api_client import search_issues_sync
 from logger import logger, Timer
 
 
+# Max tool-using steps before LangGraph stops (recursion_limit = 2*N + 1).
 MAX_ITERATIONS = 3
 
 SYSTEM_PROMPT = """Bạn là "Machine Issue Solver" — trợ lý kỹ thuật chuyên về các vấn đề máy móc trong nhà máy.
@@ -35,41 +40,23 @@ Nhiệm vụ của bạn:
 - Trả lời câu hỏi chung về bản thân và khả năng của bạn.
 - Dùng lịch sử hội thoại để hiểu ngữ cảnh (ví dụ nếu người dùng đã nói về Line 2 trước đó thì không cần hỏi lại).
 
-Bạn có công cụ `search_issues` để tra cứu các vấn đề đã ghi nhận của một máy trên một line.
-- Chỉ gọi công cụ khi cần dữ liệu thực tế từ cơ sở dữ liệu.
-- `machine_name` và `line_name` là bắt buộc; `location` và `serial` chỉ thêm khi người dùng cung cấp.
-- Sau khi có kết quả công cụ, hãy trả lời người dùng tự nhiên dựa trên kết quả, KHÔNG bịa thông tin.
+Khi cần dữ liệu thực tế về sự cố của một máy, hãy dùng công cụ `search_issues`.
+Sau khi có kết quả công cụ, hãy trả lời người dùng tự nhiên dựa trên kết quả, KHÔNG bịa thông tin.
 
 Quy tắc trả lời:
 - Trả lời bằng tiếng Việt nếu người dùng dùng tiếng Việt.
 - Ngắn gọn, rõ ràng, tập trung vào vấn đề.
 """
 
-# Native tool schema (OpenAI function format) passed to ``llm.bind_tools``.
-SEARCH_ISSUES_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "search_issues",
-        "description": "Tra cứu các vấn đề (issue) đã ghi nhận của một máy cụ thể trên một line cụ thể.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "machine_name": {"type": "string", "description": "Tên máy, ví dụ 'CNC-01'."},
-                "line_name": {"type": "string", "description": "Tên hoặc số line, ví dụ 'Line 2'."},
-                "location": {"type": "string", "description": "Vị trí của máy (tùy chọn)."},
-                "serial": {"type": "string", "description": "Số serial của máy (tùy chọn)."},
-            },
-            "required": ["machine_name", "line_name"],
-        },
-    },
-}
-
-TOOLS = [SEARCH_ISSUES_TOOL]
-VALID_TOOLS = {"search_issues"}
+# Side-channel: the tool pushes the issues it found into this list so the UI
+# (related-issues panel) and feedback can read them after the run.
+_issues_recorder: contextvars.ContextVar[Optional[List[Dict]]] = contextvars.ContextVar(
+    "issues_recorder", default=None
+)
 
 
 def format_issues_for_scratchpad(issues: List[Dict]) -> str:
-    """Format issue list as readable text for the tool result message."""
+    """Format issue list as readable text returned to the agent as the tool result."""
     if not issues:
         return "Không tìm thấy vấn đề nào."
 
@@ -85,61 +72,66 @@ def format_issues_for_scratchpad(issues: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def _build_messages(query: str, history: List[Dict[str, str]]) -> List[BaseMessage]:
-    """Build a proper multi-turn message array: system + history + current query."""
-    messages: List[BaseMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
-    for msg in history or []:
-        role = msg.get("role", "")
-        content = msg.get("content", "") or ""
-        if role == "user":
-            messages.append(HumanMessage(content=content))
-        elif role == "assistant":
-            messages.append(AIMessage(content=content))
-    messages.append(HumanMessage(content=query))
-    return messages
+@tool
+def search_issues(machine_name: str, line_name: str,
+                  location: Optional[str] = None, serial: Optional[str] = None) -> str:
+    """Tra cứu các vấn đề (issue) đã ghi nhận của một máy cụ thể trên một line cụ thể.
 
+    Gọi công cụ này mỗi khi cần thông tin sự cố / nguyên nhân / cách khắc phục từ
+    cơ sở dữ liệu. KHÔNG gọi cho câu chào hỏi hay câu hỏi chung không liên quan máy móc.
 
-@observe(name="tool_execution")
-def _execute_tool(name: str, args: Dict) -> tuple:
-    """Execute a tool call. Returns (result_text, issues_found)."""
-    if name == "search_issues":
-        machine_name = args.get("machine_name", "") or ""
-        line_name = args.get("line_name", "") or ""
-        location = args.get("location") or None
-        serial = args.get("serial") or None
-        try:
-            with Timer(f"Tool: search_issues({machine_name}, {line_name}, location={location}, serial={serial})"):
-                issues = search_issues_sync(machine_name, line_name, location=location, serial=serial)
-        except Exception as e:
-            logger.error(f"Tool execution error: {e}")
-            return f"Lỗi khi gọi tool 'search_issues': {e}", []
+    Args:
+        machine_name: Tên máy, ví dụ 'CNC-01' (bắt buộc).
+        line_name: Tên hoặc số line, ví dụ 'Line 2' (bắt buộc).
+        location: Vị trí của máy (chỉ thêm khi người dùng cung cấp).
+        serial: Số serial của máy (chỉ thêm khi người dùng cung cấp).
+    """
+    try:
+        with Timer(f"Tool: search_issues({machine_name}, {line_name}, location={location}, serial={serial})"):
+            issues = search_issues_sync(machine_name, line_name, location=location, serial=serial)
+    except Exception as e:
+        logger.error(f"Tool execution error: {e}")
+        return f"Lỗi khi gọi tool 'search_issues': {e}"
 
-        if not issues:
-            desc = f"máy '{machine_name}' trên line '{line_name}'"
-            if location:
-                desc += f" tại Location '{location}'"
-            if serial:
-                desc += f" với Serial '{serial}'"
-            return f"Không tìm thấy vấn đề nào cho {desc}.", []
-        return format_issues_for_scratchpad(issues), issues
+    rec = _issues_recorder.get()
+    if rec is not None:
+        rec.clear()
+        if issues:
+            rec.extend(issues)
 
-    return f"Tool '{name}' không được hỗ trợ.", []
-
-
-def _tool_status_message(tool_name: str, tool_args: Dict) -> str:
-    """User-friendly status message shown while a tool runs."""
-    if tool_name == "search_issues":
-        machine = tool_args.get("machine_name", "")
-        line = tool_args.get("line_name", "")
-        location = tool_args.get("location")
-        serial = tool_args.get("serial")
-        msg = f"Đang tìm kiếm vấn đề: {machine} trên {line}"
+    if not issues:
+        desc = f"máy '{machine_name}' trên line '{line_name}'"
         if location:
-            msg += f", Location {location}"
+            desc += f" tại Location '{location}'"
         if serial:
-            msg += f", Serial {serial}"
-        return msg + "..."
+            desc += f" với Serial '{serial}'"
+        return f"Không tìm thấy vấn đề nào cho {desc}."
+    return format_issues_for_scratchpad(issues)
+
+
+TOOLS = [search_issues]
+
+
+def _tool_status_message(tool_name: str) -> str:
+    """User-facing status shown while a tool runs."""
+    if tool_name == "search_issues":
+        return "Đang tra cứu cơ sở dữ liệu sự cố..."
     return f"Đang thực hiện: {tool_name}..."
+
+
+def _build_messages(query: str, history: List[Dict[str, str]]) -> List[tuple]:
+    """Prior turns (memory) + current question, as (role, text) tuples.
+
+    The system prompt is supplied separately via create_react_agent(prompt=...).
+    """
+    msgs: List[tuple] = []
+    for h in history or []:
+        role = "user" if h.get("role") == "user" else "assistant"
+        content = (h.get("content") or "").strip()
+        if content:
+            msgs.append((role, content))
+    msgs.append(("user", query))
+    return msgs
 
 
 class StreamResult:
@@ -166,80 +158,64 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
       {"type": "status", "message": "..."}  — progress indicator for UI
       {"type": "chunk",  "text": "..."}     — text chunk to append to response
 
-    transform_to_string merges all chunk events into a single string for the
-    Langfuse output. Nested @observe calls (tool_execution) attach to the
-    active trace via propagate_attributes().
+    Drives a LangGraph ReAct agent (create_react_agent) and streams only the
+    assistant's answer tokens; tool-call chunks and tool observations are not
+    shown. Issues found by the tool are collected via a contextvar recorder.
     """
     logger.info(f"Processing query (streaming): {query}")
     history = history or []
 
-    # Langfuse v4: propagate session_id / user_id to all nested observations.
-    propagate_kwargs = {}
-    if session_id:
-        propagate_kwargs["session_id"] = session_id
-    if user_id:
-        propagate_kwargs["user_id"] = user_id
-
-    all_issues: List[Dict] = []
-
-    llm = get_chat_model(api_key=api_key).bind_tools(TOOLS)
-    messages = _build_messages(query, history)
+    issues_box: List[Dict] = []
+    token = _issues_recorder.set(issues_box)
 
     try:
-        _attr_ctx = propagate_attributes(**propagate_kwargs) if propagate_kwargs else nullcontext()
-    except Exception as lf_err:
-        logger.debug(f"Langfuse propagate_attributes skipped: {lf_err}")
-        _attr_ctx = nullcontext()
+        llm = get_chat_model(api_key=api_key)
+        agent = create_react_agent(llm, TOOLS, prompt=SYSTEM_PROMPT)
+        messages = _build_messages(query, history)
 
-    with _attr_ctx:
-        try:
-            # Capture trace_id for feedback scoring.
+        config = {"recursion_limit": 2 * MAX_ITERATIONS + 1}
+        handler = langchain_handler()  # None when Langfuse is not configured
+        if handler:
+            config["callbacks"] = [handler]
+
+        with trace_attributes(session_id=session_id or "", user_id=user_id or "",
+                              trace_name="chat_query"):
             if result is not None:
                 try:
                     result.trace_id = get_client().get_current_trace_id()
                 except Exception:
                     pass
 
-            first_turn = True
-            for iteration in range(MAX_ITERATIONS + 1):
-                yield {"type": "status",
-                       "message": "Đang phân tích câu hỏi..." if first_turn else "Đang viết câu trả lời..."}
+            yield {"type": "status", "message": "Đang phân tích câu hỏi..."}
 
-                gathered = None
-                with Timer(f"LLM streaming call (iteration {iteration})"):
-                    for chunk in llm.stream(messages):
-                        gathered = chunk if gathered is None else gathered + chunk
-                        if chunk.content:
-                            yield {"type": "chunk", "text": chunk.content}
+            announced_tools = set()
+            with Timer("ReAct agent stream"):
+                for chunk, _meta in agent.stream(
+                    {"messages": messages}, config=config, stream_mode="messages"
+                ):
+                    if not isinstance(chunk, AIMessageChunk):
+                        continue  # skip ToolMessage observations etc.
 
-                tool_calls = list(getattr(gathered, "tool_calls", None) or []) if gathered is not None else []
+                    for tcc in (getattr(chunk, "tool_call_chunks", None) or []):
+                        name = tcc.get("name")
+                        if name and name not in announced_tools:
+                            announced_tools.add(name)
+                            yield {"type": "status", "message": _tool_status_message(name)}
 
-                if not tool_calls:
-                    # Direct answer — already streamed to the user.
-                    break
-
-                # Model requested tool(s): record the assistant turn, run them, feed results back.
-                messages.append(AIMessage(content=gathered.content or "", tool_calls=tool_calls))
-                for tc in tool_calls:
-                    name = tc.get("name", "")
-                    args = tc.get("args", {}) or {}
-                    tc_id = tc.get("id")
-                    logger.info(f"Agent wants tool: {name}({json.dumps(args, ensure_ascii=False)})")
-
-                    yield {"type": "status", "message": _tool_status_message(name, args)}
-                    result_text, issues_found = _execute_tool(name, args)
-                    if issues_found:
-                        all_issues = issues_found
-                    messages.append(ToolMessage(content=result_text, tool_call_id=tc_id))
-
-                first_turn = False
+                    if chunk.content:
+                        yield {"type": "chunk", "text": chunk.content}
 
             if result is not None:
-                result.issues = all_issues
-            return
+                result.issues = list(issues_box)
 
-        except Exception as e:
-            logger.error(f"Streaming error: {e}", exc_info=True)
-            if result is not None:
-                result.error = str(e)
-            return
+    except Exception as e:
+        logger.error(f"Streaming error: {e}", exc_info=True)
+        if result is not None:
+            result.error = str(e)
+    finally:
+        try:
+            flush_langfuse()
+        except Exception:
+            pass
+        _issues_recorder.reset(token)
+    return
