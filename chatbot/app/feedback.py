@@ -2,8 +2,9 @@
 Feedback System — Default 10/10 with optional user correction
 
 Logic:
-- Every assistant response is auto-scored 10/10 by default (best assumption).
-- Users can click "Sửa đánh giá" to lower the score if the answer was not satisfactory.
+- Every assistant response is auto-scored 10/10 by default in the backend (silent).
+- The UI shows ONLY a 5-star widget. If the user does not rate, the default 10/10
+  stands; if the user picks stars, that score overrides the default (same score_id).
 - Star mapping: ⭐=2, ⭐⭐=4, ⭐⭐⭐=6, ⭐⭐⭐⭐=8, ⭐⭐⭐⭐⭐=10
 
 Dialog forms by score range:
@@ -70,9 +71,9 @@ def _get_form_fields(score: int) -> dict:
     }
 
 
-@st.dialog("📝 Chỉnh sửa đánh giá")
+@st.dialog("📝 Đánh giá câu trả lời")
 def _feedback_dialog(current_score: int, trace_id: str, msg_index: int, score_id: str = None):
-    """Modal dialog for users to change the default 10/10 rating."""
+    """Modal dialog for users to rate the assistant answer (overrides the default 10/10)."""
     stars_key = f"fb_dialog_stars_{msg_index}"
 
     # Default to the current score's star count so the widget is pre-filled
@@ -133,7 +134,7 @@ def _feedback_dialog(current_score: int, trace_id: str, msg_index: int, score_id
         can_submit = False
         st.caption("(*) Trường bắt buộc")
 
-    if st.button("✅ Cập nhật đánh giá", type="primary", disabled=not can_submit, use_container_width=True):
+    if st.button("✅ Gửi đánh giá", type="primary", disabled=not can_submit, use_container_width=True):
         success = submit_feedback_to_langfuse(
             trace_id=trace_id,
             score=score,
@@ -183,9 +184,10 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
             st.session_state[score_key] = 10
             st.session_state[f"fb_score_id_{msg_index}"] = score_id
 
-    submitted = st.session_state.get(submitted_key, False)
-    score = st.session_state.get(score_key, 10)
     is_auto = st.session_state.get(auto_key, False)
+    # Whether the user actively rated (as opposed to the silent default 10/10)
+    user_rated = st.session_state.get(submitted_key, False) and not is_auto
+    user_score = st.session_state.get(score_key)
 
     # Subtle divider
     st.markdown(
@@ -193,39 +195,29 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
         unsafe_allow_html=True,
     )
 
-    if submitted and score is not None:
-        emoji = "😊" if score >= 9 else "🙂" if score >= 7 else "😐" if score >= 4 else "😞"
-        if is_auto and score == 10:
-            label = f"{emoji} Mặc định: {score}/10"
-        else:
-            label = f"{emoji} Đã đánh giá: {score}/10"
+    # Always show only the 5-star widget. The default 10/10 lives in the backend
+    # silently; picking a star opens the dialog and overrides it.
+    st.markdown(
+        '<p style="color: rgba(128,128,128,0.6); font-size: 0.8em; margin: 0.2rem 0 0.3rem 0;">'
+        'Đánh giá câu trả lời (không bắt buộc)</p>',
+        unsafe_allow_html=True,
+    )
 
-        col_label, col_edit = st.columns([3, 1])
-        with col_label:
-            st.markdown(
-                f'<span style="color: gray; font-size: 0.85em;">{label}</span>',
-                unsafe_allow_html=True,
-            )
-        with col_edit:
-            if st.button("✏️ Sửa", key=f"fb_edit_{msg_index}"):
-                st.session_state[f"fb_dialog_open_{msg_index}"] = True
-                st.session_state[f"fb_dialog_score_{msg_index}"] = score
-                st.rerun()
-    else:
-        # Fallback if auto-submit failed or no trace_id — show manual widget
+    def _on_star_pick():
+        # Fires only on real user interaction, so it won't re-open on reruns
+        sv = st.session_state.get(f"fb_stars_{msg_index}")
+        if sv is not None:
+            st.session_state[f"fb_dialog_open_{msg_index}"] = True
+            st.session_state[f"fb_dialog_score_{msg_index}"] = STAR_SCORE_MAP.get(sv, 6)
+
+    st.feedback("stars", key=f"fb_stars_{msg_index}", on_change=_on_star_pick)
+
+    if user_rated and user_score is not None:
+        emoji = "😊" if user_score >= 9 else "🙂" if user_score >= 7 else "😐" if user_score >= 4 else "😞"
         st.markdown(
-            '<p style="color: rgba(128,128,128,0.6); font-size: 0.8em; margin: 0.2rem 0 0.3rem 0;">'
-            'Hãy để lại feedback của bạn</p>',
+            f'<span style="color: gray; font-size: 0.8em;">{emoji} Cảm ơn! Đã ghi nhận: {user_score}/10</span>',
             unsafe_allow_html=True,
         )
-        star_val = st.feedback(
-            "stars",
-            key=f"fb_stars_{msg_index}",
-        )
-        if star_val is not None:
-            score = STAR_SCORE_MAP.get(star_val, 6)
-            st.session_state[f"fb_dialog_open_{msg_index}"] = True
-            st.session_state[f"fb_dialog_score_{msg_index}"] = score
 
     # Open dialog if requested
     if st.session_state.get(f"fb_dialog_open_{msg_index}", False):
