@@ -382,7 +382,10 @@ with tab_create:
         st.markdown("**Thời gian & Thông số**")
         col_d1, col_d2, col_d3, col_d4 = st.columns(4)
         with col_d1:
-            date_val = st.text_input("Date", placeholder="2026-04-07", key="create_date")
+            # Calendar picker — Week & Year được tính tự động từ ngày này
+            date_obj = st.date_input(
+                "Date 📅", value=None, format="YYYY-MM-DD", key="create_date"
+            )
         with col_d2:
             start_time = st.text_input("Start Time", placeholder="08:00", key="create_start_time")
         with col_d3:
@@ -390,13 +393,26 @@ with tab_create:
         with col_d4:
             total_time = st.text_input("Total Time", placeholder="30", key="create_total_time")
 
+        # Derive Date string + ISO week + year from the picked date
+        if date_obj:
+            date_val = date_obj.strftime("%Y-%m-%d")
+            week = date_obj.isocalendar()[1]
+            year = date_obj.year
+        else:
+            date_val, week, year = None, None, None
+
         col_w1, col_w2, col_w3 = st.columns(3)
         with col_w1:
-            week = st.number_input("Week", min_value=1, max_value=53, value=None, key="create_week")
+            # No key: keep value driven by the date picker on every rerun
+            st.text_input("Week (tự tính)", value=str(week) if week else "—",
+                          disabled=True)
         with col_w2:
-            year = st.number_input("Year", min_value=2020, max_value=2030, value=None, key="create_year")
+            st.text_input("Year (tự tính)", value=str(year) if year else "—",
+                          disabled=True)
         with col_w3:
-            pic = st.text_input("PIC", placeholder="Người phụ trách", key="create_pic")
+            pic = st.text_input("PIC (chỉ số)", placeholder="VD: 007", key="create_pic")
+            if pic and not pic.isdigit():
+                st.caption("⚠️ PIC chỉ được nhập số (có thể bắt đầu bằng 0).")
 
     with st.container(border=True):
         st.markdown("**Nội dung vấn đề**")
@@ -439,6 +455,8 @@ with tab_create:
                 st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
             elif not line_name.isdigit():
                 st.warning("Line phải là số (VD: 2 hoặc 02).")
+            elif pic and not pic.isdigit():
+                st.warning("PIC chỉ được nhập số (có thể bắt đầu bằng 0).")
             else:
                 preview_result = check_team_line_machine(
                     team_name, line_name, machine_name,
@@ -469,6 +487,8 @@ with tab_create:
                 st.warning("Vui lòng nhập đầy đủ các trường bắt buộc: Team, Line, Machine, Hiện tượng, Nguyên nhân, Khắc phục.")
             elif not line_name.isdigit():
                 st.warning("Line phải là số (VD: 2 hoặc 02).")
+            elif pic and not pic.isdigit():
+                st.warning("PIC chỉ được nhập số (có thể bắt đầu bằng 0).")
             else:
                 try:
                     data = {
@@ -477,7 +497,7 @@ with tab_create:
                         "MachineName": machine_name.strip(),
                         "Location": location.strip() if location else None,
                         "Serial": serial.strip() if serial else None,
-                        "Date": date_val.strip() if date_val else None,
+                        "Date": date_val,  # already 'YYYY-MM-DD' or None from date picker
                         "start_time": start_time.strip() if start_time else None,
                         "stop_time": stop_time.strip() if stop_time else None,
                         "total_time": total_time.strip() if total_time else None,
