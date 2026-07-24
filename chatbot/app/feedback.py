@@ -185,9 +185,9 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
             st.session_state[f"fb_score_id_{msg_index}"] = score_id
 
     is_auto = st.session_state.get(auto_key, False)
-    # Whether the user actively rated (as opposed to the silent default 10/10)
+    # A confirmed (submitted) user rating, as opposed to the silent default 10/10
     user_rated = st.session_state.get(submitted_key, False) and not is_auto
-    user_score = st.session_state.get(score_key)
+    user_score = st.session_state.get(score_key) if user_rated else None
 
     # Subtle divider
     st.markdown(
@@ -195,29 +195,33 @@ def render_feedback_widget(msg_index: int, trace_id: str = None):
         unsafe_allow_html=True,
     )
 
-    # Always show only the 5-star widget. The default 10/10 lives in the backend
-    # silently; picking a star opens the dialog and overrides it.
+    # Only the 5-star widget is shown. The default 10/10 lives in the backend
+    # silently; picking a star opens the dialog and (on submit) overrides it.
     st.markdown(
         '<p style="color: rgba(128,128,128,0.6); font-size: 0.8em; margin: 0.2rem 0 0.3rem 0;">'
         'Đánh giá câu trả lời (không bắt buộc)</p>',
         unsafe_allow_html=True,
     )
 
+    stars_key = f"fb_stars_{msg_index}"
+    dialog_stars_key = f"fb_dialog_stars_{msg_index}"
+
+    # Make the outside stars a *controlled* widget: they reflect ONLY a rating that
+    # was actually submitted. Setting the value before the widget is created means
+    # an un-submitted dialog reverts the stars to empty, and a successful submit
+    # shows the chosen stars — no false "already rated" impression.
+    st.session_state[stars_key] = SCORE_STAR_MAP.get(user_score) if user_score is not None else None
+
     def _on_star_pick():
         # Fires only on real user interaction, so it won't re-open on reruns
-        sv = st.session_state.get(f"fb_stars_{msg_index}")
+        sv = st.session_state.get(stars_key)
         if sv is not None:
+            # Sync the dialog's star widget to the outside pick before opening
+            st.session_state[dialog_stars_key] = sv
             st.session_state[f"fb_dialog_open_{msg_index}"] = True
             st.session_state[f"fb_dialog_score_{msg_index}"] = STAR_SCORE_MAP.get(sv, 6)
 
-    st.feedback("stars", key=f"fb_stars_{msg_index}", on_change=_on_star_pick)
-
-    if user_rated and user_score is not None:
-        emoji = "😊" if user_score >= 9 else "🙂" if user_score >= 7 else "😐" if user_score >= 4 else "😞"
-        st.markdown(
-            f'<span style="color: gray; font-size: 0.8em;">{emoji} Cảm ơn! Đã ghi nhận: {user_score}/10</span>',
-            unsafe_allow_html=True,
-        )
+    st.feedback("stars", key=stars_key, on_change=_on_star_pick)
 
     # Open dialog if requested
     if st.session_state.get(f"fb_dialog_open_{msg_index}", False):
