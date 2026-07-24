@@ -37,17 +37,11 @@ services:
     container_name: machine-issue-chatbot
     environment:
       ISSUE_API_URL: http://issue-api:8888
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
-      # OpenAI-compatible endpoint (LLM_PROVIDER=openai)
+      # OpenAI-compatible endpoint (native tool calling)
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
-      # Legacy company LLM (LLM_PROVIDER=company)
-      LLM_MODEL: ${LLM_MODEL:-Gauss2.3}
-      COMPANY_LLM_API_KEY: ${COMPANY_LLM_API_KEY:-}
-      COMPANY_LLM_MODEL_ID: ${COMPANY_LLM_MODEL_ID:-}
-      COMPANY_LLM_MODEL_URL: ${COMPANY_LLM_MODEL_URL:-}
       CONTEXT_WINDOW_LIMIT: ${CONTEXT_WINDOW_LIMIT:-128000}
       CONTEXT_WARN_THRESHOLD: ${CONTEXT_WARN_THRESHOLD:-100000}
     ports:

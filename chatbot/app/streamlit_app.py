@@ -61,11 +61,8 @@ with st.sidebar:
 
     st.divider()
     st.header("⚙️ System Info")
-    from config import LLM_PROVIDER, OPENAI_MODEL, LLM_MODEL
-    if LLM_PROVIDER == "company":
-        st.info(f"LLM: Company Gauss ({LLM_MODEL})")
-    else:
-        st.info(f"LLM: OpenAI-compatible ({OPENAI_MODEL or 'model chưa cấu hình'})")
+    from config import OPENAI_MODEL
+    st.info(f"LLM: OpenAI-compatible ({OPENAI_MODEL or 'model chưa cấu hình'})")
     st.success("Connected to Issue API")
 
     # Context usage indicator
