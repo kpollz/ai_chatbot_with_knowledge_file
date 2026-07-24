@@ -25,7 +25,7 @@ from langgraph.prebuilt import create_react_agent
 from langfuse import observe, get_client
 
 from llm import get_chat_model
-from langfuse_setup import langchain_handler, trace_attributes, flush_langfuse
+from langfuse_setup import langchain_handler, trace_attributes
 from api_client import search_issues_sync
 from logger import logger, Timer
 
@@ -213,9 +213,10 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
         if result is not None:
             result.error = str(e)
     finally:
-        try:
-            flush_langfuse()
-        except Exception:
-            pass
+        # NOTE: do NOT flush Langfuse here. Streamlit is a long-running process,
+        # so the SDK's background exporter sends traces off the request path.
+        # A synchronous flush per request would add a blocking network round-trip
+        # to the tail of every answer once Langfuse is enabled (see issue #3).
+        # A single flush at process exit is registered in langfuse_setup.
         _issues_recorder.reset(token)
     return

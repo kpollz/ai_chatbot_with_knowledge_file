@@ -37,6 +37,7 @@ Setting Trace Attributes (session_id, user_id):
         return result
 """
 
+import atexit
 from contextlib import contextmanager
 
 from langfuse import (
@@ -133,9 +134,11 @@ def flush_langfuse(timeout: float = 30.0) -> None:
     Args:
         timeout: Maximum time to wait for flush completion (seconds)
     """
+    # NOTE: langfuse v4 client.flush() drains the queue synchronously and does
+    # NOT accept a timeout argument; `timeout` is kept only for backward compat.
     client = get_client()
     if client:
-        client.flush(timeout=timeout)
+        client.flush()
 
 
 def shutdown_langfuse(timeout: float = 30.0) -> None:
@@ -215,3 +218,17 @@ __all__ = [
     "update_current_observation_safe",
     "update_current_generation_safe",
 ]
+
+
+# Flush once when the process exits, instead of after every request. The SDK's
+# background exporter handles sending during normal operation; this only catches
+# the last buffered traces on shutdown. No-op when Langfuse is not configured,
+# and never raises out of the atexit callback.
+def _flush_at_exit() -> None:
+    try:
+        flush_langfuse()
+    except Exception:
+        pass
+
+
+atexit.register(_flush_at_exit)
