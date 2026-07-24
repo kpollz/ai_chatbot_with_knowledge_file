@@ -5,10 +5,22 @@ Replaces direct SQLite queries — all database access goes through the Issue AP
 """
 
 from typing import List, Dict
+import atexit
 import httpx
 
 from config import ISSUE_API_URL
 from logger import logger
+
+
+# Shared client with a connection pool — reused across requests so calls to the
+# Issue API keep TCP connections alive instead of doing a fresh handshake each
+# time. httpx.Client is thread-safe for concurrent requests (Streamlit runs each
+# session in its own thread). Independent of the LLM API key. Closed at exit.
+_client = httpx.Client(
+    timeout=30,
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+)
+atexit.register(_client.close)
 
 
 # ---- Sync operations ----
@@ -17,12 +29,11 @@ def _sync_request(method: str, path: str, params: dict = None, json_data: dict =
     """Sync HTTP request helper."""
     url = f"{ISSUE_API_URL}{path}"
     try:
-        with httpx.Client(timeout=30) as client:
-            response = client.request(method, url, params=params, json=json_data)
-            response.raise_for_status()
-            if response.status_code == 204:
-                return None
-            return response.json()
+        response = _client.request(method, url, params=params, json=json_data)
+        response.raise_for_status()
+        if response.status_code == 204:
+            return None
+        return response.json()
     except httpx.ConnectError:
         raise ConnectionError(f"Cannot connect to Issue API at {ISSUE_API_URL}.")
     except httpx.HTTPStatusError as e:
