@@ -37,14 +37,61 @@ Setting Trace Attributes (session_id, user_id):
         return result
 """
 
+from contextlib import contextmanager
+
 from langfuse import (
     observe,
     get_client,
     propagate_attributes,
 )
 
+from config import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY
+from logger import logger
+
 # Flag to track if Langfuse is available and working
 _langfuse_available: bool | None = None
+
+
+def is_configured() -> bool:
+    """True when Langfuse keys are present. Tracing is a no-op otherwise."""
+    return bool(LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)
+
+
+def langchain_handler():
+    """LangChain/LangGraph CallbackHandler for tracing agent runs, or None if off.
+
+    Mirrors the chat-with-documents pattern: attach this to the LangGraph
+    ``agent.stream(config={"callbacks": [handler]})`` so every LLM/tool step of
+    the ReAct agent shows up as nested observations in Langfuse.
+    """
+    if not is_configured():
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+        return CallbackHandler()
+    except Exception as exc:  # never let tracing break chat
+        logger.warning(f"langfuse langchain handler unavailable: {exc}")
+        return None
+
+
+@contextmanager
+def trace_attributes(session_id: str = "", user_id: str = "",
+                     trace_name: str = "chat_query"):
+    """Set trace-level attributes (session/user/name) for the enclosed run.
+
+    No-op when tracing is off. session_id groups a conversation's turns into
+    one Langfuse trace.
+    """
+    if not is_configured():
+        yield
+        return
+    try:
+        with propagate_attributes(user_id=user_id or "", session_id=session_id or "",
+                                  trace_name=trace_name):
+            yield
+    except Exception as exc:
+        logger.warning(f"langfuse propagate_attributes unavailable: {exc}")
+        yield
 
 
 def is_langfuse_available() -> bool:
@@ -160,6 +207,9 @@ __all__ = [
     "observe",
     "get_client",
     "propagate_attributes",
+    "is_configured",
+    "langchain_handler",
+    "trace_attributes",
     "flush_langfuse",
     "shutdown_langfuse",
     "update_current_observation_safe",

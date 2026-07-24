@@ -4,8 +4,10 @@ langgraph
 # LangChain Core
 langchain-core
 langchain-community
+# Meta package — required by langfuse.langchain CallbackHandler (agent tracing)
+langchain
 
-# OpenAI-compatible chat model (LLM_PROVIDER=openai)
+# OpenAI-compatible chat model
 langchain-openai
 
 # HTTP clients
