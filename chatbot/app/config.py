@@ -11,11 +11,17 @@ load_dotenv()
 ISSUE_API_URL = os.getenv("ISSUE_API_URL", "http://localhost:8888")
 
 # LLM Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "company")
-LLM_MODEL = os.getenv("LLM_MODEL", "Gauss2.3")
+# Provider: "openai" (any OpenAI-compatible endpoint, native tool calling) | "company" (legacy Gauss)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+LLM_MODEL = os.getenv("LLM_MODEL", "Gauss2.3")  # used by the legacy "company" path
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
-# Company LLM Configuration
+# OpenAI-compatible endpoint (LLM_PROVIDER=openai)
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")  # e.g. http://host:port/v1
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")    # may be overridden by the sidebar key
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "")        # model name sent to the endpoint
+
+# Company LLM Configuration (legacy)
 COMPANY_LLM_API_KEY = os.getenv("COMPANY_LLM_API_KEY", "")
 COMPANY_LLM_MODEL_ID = os.getenv("COMPANY_LLM_MODEL_ID")
 COMPANY_LLM_MODEL_URL = os.getenv("COMPANY_LLM_MODEL_URL")

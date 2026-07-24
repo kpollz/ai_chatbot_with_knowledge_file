@@ -5,6 +5,9 @@ langgraph
 langchain-core
 langchain-community
 
+# OpenAI-compatible chat model (LLM_PROVIDER=openai)
+langchain-openai
+
 # HTTP clients
 httpx
 requests

@@ -1,104 +1,75 @@
 """
-Machine Issue Solver — Streaming ReAct Agent (Custom Implementation)
+Machine Issue Solver — Streaming ReAct Agent (native tool calling)
 
-Architecture: Text-based tool calling for LLMs without native function support.
-Custom streaming implementation that buffers tokens to detect <tool_call> patterns.
+Uses an OpenAI-compatible chat model with native function/tool calling
+(via LangChain ``bind_tools``). The model decides when to call a tool; tool
+calls arrive as structured data on the streamed ``AIMessageChunk`` — no more
+text/regex ``<tool_call>`` parsing.
 
 Flow:
-  LLM Stream (1st call) → Detect tool call? → YES: Execute tool → LLM Stream (final)
-                                   ↓ NO
-                          Stream directly to user
+  LLM stream → tool_calls? → YES: execute tool(s), append ToolMessage → LLM stream (final)
+                    ↓ NO
+             stream answer directly to user
 """
 
 from typing import Optional, List, Dict
 from contextlib import nullcontext
 import json
-import re
 
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import (
+    SystemMessage, HumanMessage, AIMessage, ToolMessage, BaseMessage,
+)
 from langfuse import observe, propagate_attributes, get_client
-from config import LLM_MODEL, LLM_TEMPERATURE
-from company_chat_model import get_company_llm
+
+from llm import get_chat_model
 from api_client import search_issues_sync
-from history import format_history_for_prompt
 from logger import logger, Timer
 
 
 MAX_ITERATIONS = 3
-TOOL_CALL_PATTERN = re.compile(r'<tool_call>(.*?)</tool_call>', re.DOTALL)
-RAW_TOOL_CALL_PATTERN = re.compile(r'\{[^{}]*"tool"\s*:\s*"[^"]+?"[^{}]*"args"\s*:\s*\{[^{}]*\}[^{}]*\}', re.DOTALL)
 
-SYSTEM_PROMPT = """Ban la "Machine Issue Solver" — tro ly ky thuat chuyen ve cac van de may moc trong nha may.
+SYSTEM_PROMPT = """Bạn là "Machine Issue Solver" — trợ lý kỹ thuật chuyên về các vấn đề máy móc trong nhà máy.
 
-Nhiem vu cua ban:
-- Tra loi cac cau hoi ve van de may moc dua tren du lieu trong co so du lieu
-- Tra loi cac cau hoi chung ve ban than va kha nang cua ban
-- Su dung lich su hoi thoai de hieu ngu canh (vi du: neu nguoi dung da noi ve Line 2 truoc do, khong can hoi lai)
+Nhiệm vụ của bạn:
+- Trả lời câu hỏi về vấn đề máy móc dựa trên dữ liệu trong cơ sở dữ liệu.
+- Trả lời câu hỏi chung về bản thân và khả năng của bạn.
+- Dùng lịch sử hội thoại để hiểu ngữ cảnh (ví dụ nếu người dùng đã nói về Line 2 trước đó thì không cần hỏi lại).
 
-Ban co the su dung tool sau:
+Bạn có công cụ `search_issues` để tra cứu các vấn đề đã ghi nhận của một máy trên một line.
+- Chỉ gọi công cụ khi cần dữ liệu thực tế từ cơ sở dữ liệu.
+- `machine_name` và `line_name` là bắt buộc; `location` và `serial` chỉ thêm khi người dùng cung cấp.
+- Sau khi có kết quả công cụ, hãy trả lời người dùng tự nhiên dựa trên kết quả, KHÔNG bịa thông tin.
 
-search_issues(machine_name: str, line_name: str, location: str = null, serial: str = null)
-   Tim kiem cac van de lien quan den mot may cu the tren mot line cu the.
-   - machine_name va line_name la bat buoc.
-   - location va serial la tuy chon (optional). Chi them vao khi nguoi dung cung cap thong tin nay.
-   - Vi du: neu nguoi dung noi "may CNC-01 tai vi tri A2" thi them location="A2".
-
-Quy tac su dung tool:
-- Chi goi MOT tool moi lan phan hoi.
-- Khi can goi tool, hay tra loi CHI voi tool call (khong them giai thich).
-- Tool call phai dung dinh dang:
-  <tool_call>{"tool": "ten_tool", "args": {"arg1": "gia_tri"}}</tool_call>
-- Sau khi tool tra ket qua, hay tra loi nguoi dung tu nhien (KHONG goi tool nua).
-
-Quy tac tra loi:
-- Tra loi bang tieng Viet neu nguoi dung dung tieng Viet.
-- Tra loi ngan gon, ro rang, tap trung vao van de.
-- Dua tren ket qua tool de tra loi, khong tuong tuong ra thong tin.
+Quy tắc trả lời:
+- Trả lời bằng tiếng Việt nếu người dùng dùng tiếng Việt.
+- Ngắn gọn, rõ ràng, tập trung vào vấn đề.
 """
 
+# Native tool schema (OpenAI function format) passed to ``llm.bind_tools``.
+SEARCH_ISSUES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_issues",
+        "description": "Tra cứu các vấn đề (issue) đã ghi nhận của một máy cụ thể trên một line cụ thể.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "machine_name": {"type": "string", "description": "Tên máy, ví dụ 'CNC-01'."},
+                "line_name": {"type": "string", "description": "Tên hoặc số line, ví dụ 'Line 2'."},
+                "location": {"type": "string", "description": "Vị trí của máy (tùy chọn)."},
+                "serial": {"type": "string", "description": "Số serial của máy (tùy chọn)."},
+            },
+            "required": ["machine_name", "line_name"],
+        },
+    },
+}
+
+TOOLS = [SEARCH_ISSUES_TOOL]
 VALID_TOOLS = {"search_issues"}
 
 
-def parse_tool_call(text: str) -> Optional[Dict]:
-    """Extract tool call from LLM response text.
-
-    Supports two formats:
-      1. <tool_call>{"tool": "...", "args": {...}}</tool_call>  (heavy model)
-      2. {"tool": "...", "args": {...}}                         (fast model)
-    """
-    # Try 1: XML-tagged format
-    match = TOOL_CALL_PATTERN.search(text)
-    if match:
-        try:
-            tool_call = json.loads(match.group(1).strip())
-            if tool_call.get("tool") in VALID_TOOLS:
-                return tool_call
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse tool call JSON: {match.group(1)}")
-
-    # Try 2: Raw JSON format (fast model)
-    match = RAW_TOOL_CALL_PATTERN.search(text)
-    if match:
-        try:
-            tool_call = json.loads(match.group(0))
-            if tool_call.get("tool") in VALID_TOOLS:
-                logger.info(f"Detected raw JSON tool call (no XML tags)")
-                return tool_call
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
-
-def clean_response(text: str) -> str:
-    """Remove tool call patterns and clean up the response text."""
-    cleaned = TOOL_CALL_PATTERN.sub("", text)
-    cleaned = RAW_TOOL_CALL_PATTERN.sub("", cleaned)
-    return cleaned.strip()
-
-
 def format_issues_for_scratchpad(issues: List[Dict]) -> str:
-    """Format issue list as readable text for the agent scratchpad."""
+    """Format issue list as readable text for the tool result message."""
     if not issues:
         return "Không tìm thấy vấn đề nào."
 
@@ -114,62 +85,49 @@ def format_issues_for_scratchpad(issues: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def _build_agent_messages(query: str, history: List[Dict[str, str]],
-                          scratchpad: str) -> list:
-    """Build LLM messages for agent call."""
-    parts = []
-    history_text = format_history_for_prompt(history)
-    if history_text:
-        parts.append(history_text)
-    parts.append(f"Câu hỏi hiện tại của ngườii dùng: {query}")
-    if scratchpad:
-        parts.append(
-            f"\n{scratchpad}\n"
-            "Dựa trên kết quả tool ở trên, hãy trả lờii ngườii dùng chi tiết và hữu ích. "
-            "KHÔNG gọi thêm tool nếu không cần thiết."
-        )
-    user_prompt = "\n\n".join(parts)
-    return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_prompt)]
+def _build_messages(query: str, history: List[Dict[str, str]]) -> List[BaseMessage]:
+    """Build a proper multi-turn message array: system + history + current query."""
+    messages: List[BaseMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
+    for msg in history or []:
+        role = msg.get("role", "")
+        content = msg.get("content", "") or ""
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+    messages.append(HumanMessage(content=query))
+    return messages
 
 
 @observe(name="tool_execution")
-def _execute_tool_sync(tool_call: Dict) -> tuple:
-    """Execute a tool call synchronously. Returns (result_text, issues_found)."""
-    tool_name = tool_call.get("tool", "")
-    tool_args = tool_call.get("args", {})
-    result_text = ""
-    issues_found = []
-
-    try:
-        if tool_name == "search_issues":
-            machine_name = tool_args.get("machine_name", "")
-            line_name = tool_args.get("line_name", "")
-            location = tool_args.get("location")
-            serial = tool_args.get("serial")
+def _execute_tool(name: str, args: Dict) -> tuple:
+    """Execute a tool call. Returns (result_text, issues_found)."""
+    if name == "search_issues":
+        machine_name = args.get("machine_name", "") or ""
+        line_name = args.get("line_name", "") or ""
+        location = args.get("location") or None
+        serial = args.get("serial") or None
+        try:
             with Timer(f"Tool: search_issues({machine_name}, {line_name}, location={location}, serial={serial})"):
                 issues = search_issues_sync(machine_name, line_name, location=location, serial=serial)
-            issues_found = issues
-            if not issues:
-                desc = f"Máy '{machine_name}' trên line '{line_name}'"
-                if location:
-                    desc += f" tại Location '{location}'"
-                if serial:
-                    desc += f" với Serial '{serial}'"
-                result_text = f"Không tìm thấy vấn đề nào cho {desc}."
-            else:
-                result_text = format_issues_for_scratchpad(issues)
-        else:
-            result_text = f"Tool '{tool_name}' không được hỗ trợ."
+        except Exception as e:
+            logger.error(f"Tool execution error: {e}")
+            return f"Lỗi khi gọi tool 'search_issues': {e}", []
 
-    except Exception as e:
-        logger.error(f"Tool execution error: {e}")
-        result_text = f"Lỗi khi gọi tool '{tool_name}': {e}"
+        if not issues:
+            desc = f"máy '{machine_name}' trên line '{line_name}'"
+            if location:
+                desc += f" tại Location '{location}'"
+            if serial:
+                desc += f" với Serial '{serial}'"
+            return f"Không tìm thấy vấn đề nào cho {desc}.", []
+        return format_issues_for_scratchpad(issues), issues
 
-    return result_text, issues_found
+    return f"Tool '{name}' không được hỗ trợ.", []
 
 
 def _tool_status_message(tool_name: str, tool_args: Dict) -> str:
-    """Generate a user-friendly status message for tool execution."""
+    """User-friendly status message shown while a tool runs."""
     if tool_name == "search_issues":
         machine = tool_args.get("machine_name", "")
         line = tool_args.get("line_name", "")
@@ -180,13 +138,8 @@ def _tool_status_message(tool_name: str, tool_args: Dict) -> str:
             msg += f", Location {location}"
         if serial:
             msg += f", Serial {serial}"
-        msg += "..."
-        return msg
+        return msg + "..."
     return f"Đang thực hiện: {tool_name}..."
-
-
-TOOL_CALL_PREFIXES = ("<tool_call>", '{"tool"')
-PREFIX_BUFFER_SIZE = 20  # chars — enough to detect "<tool_call>" (11) or '{"tool"' (7)
 
 
 class StreamResult:
@@ -209,34 +162,29 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
     """
     Streaming generator yielding event dicts for Streamlit rendering.
 
-    transform_to_string merges all chunk events into a single string for
-    Langfuse output, so yielded events are not logged individually.
-
-    Nested @observe calls (tool_execution, llm_generate) still attach to the
-    active trace via propagate_attributes().
-
     Event types:
       {"type": "status", "message": "..."}  — progress indicator for UI
       {"type": "chunk",  "text": "..."}     — text chunk to append to response
+
+    transform_to_string merges all chunk events into a single string for the
+    Langfuse output. Nested @observe calls (tool_execution) attach to the
+    active trace via propagate_attributes().
     """
     logger.info(f"Processing query (streaming): {query}")
     history = history or []
 
-    # Langfuse v4: propagate session_id and user_id to all nested observations
+    # Langfuse v4: propagate session_id / user_id to all nested observations.
     propagate_kwargs = {}
     if session_id:
         propagate_kwargs["session_id"] = session_id
     if user_id:
         propagate_kwargs["user_id"] = user_id
 
-    scratchpad = ""
-    all_issues = []
+    all_issues: List[Dict] = []
 
-    llm = get_company_llm(model=LLM_MODEL, temperature=LLM_TEMPERATURE, api_key=api_key)
+    llm = get_chat_model(api_key=api_key).bind_tools(TOOLS)
+    messages = _build_messages(query, history)
 
-    # Langfuse v4: use propagate_attributes context manager so all nested
-    # @observe calls (tool_execution, llm_generate) inherit
-    # session_id and user_id on their trace.
     try:
         _attr_ctx = propagate_attributes(**propagate_kwargs) if propagate_kwargs else nullcontext()
     except Exception as lf_err:
@@ -245,105 +193,53 @@ def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
 
     with _attr_ctx:
         try:
-            # Capture trace_id for feedback scoring
+            # Capture trace_id for feedback scoring.
             if result is not None:
                 try:
                     result.trace_id = get_client().get_current_trace_id()
                 except Exception:
                     pass
 
+            first_turn = True
             for iteration in range(MAX_ITERATIONS + 1):
-                messages = _build_agent_messages(query, history, scratchpad)
+                yield {"type": "status",
+                       "message": "Đang phân tích câu hỏi..." if first_turn else "Đang viết câu trả lời..."}
 
-                if not scratchpad:
-                    # --- First LLM call: prefix-buffer to detect tool calls ---
-                    yield {"type": "status", "message": "Đang phân tích câu hỏi..."}
+                gathered = None
+                with Timer(f"LLM streaming call (iteration {iteration})"):
+                    for chunk in llm.stream(messages):
+                        gathered = chunk if gathered is None else gathered + chunk
+                        if chunk.content:
+                            yield {"type": "chunk", "text": chunk.content}
 
-                    prefix = ""
-                    prefix_done = False
-                    is_tool = False
-                    buffer = []  # text strings (not AIMessageChunk)
+                tool_calls = list(getattr(gathered, "tool_calls", None) or []) if gathered is not None else []
 
-                    with Timer("LLM streaming call (1st)"):
-                        for ai_chunk in llm.stream(messages):
-                            text = ai_chunk.content
-                            if not text:
-                                continue
+                if not tool_calls:
+                    # Direct answer — already streamed to the user.
+                    break
 
-                            if not prefix_done:
-                                prefix += text
-                                buffer.append(text)
+                # Model requested tool(s): record the assistant turn, run them, feed results back.
+                messages.append(AIMessage(content=gathered.content or "", tool_calls=tool_calls))
+                for tc in tool_calls:
+                    name = tc.get("name", "")
+                    args = tc.get("args", {}) or {}
+                    tc_id = tc.get("id")
+                    logger.info(f"Agent wants tool: {name}({json.dumps(args, ensure_ascii=False)})")
 
-                                if any(tag in prefix for tag in TOOL_CALL_PREFIXES):
-                                    is_tool = True
-                                    prefix_done = True
-                                elif len(prefix) >= PREFIX_BUFFER_SIZE:
-                                    prefix_done = True
-                                    for buf_text in buffer:
-                                        yield {"type": "chunk", "text": buf_text}
-                                    buffer = None
-                            elif is_tool:
-                                buffer.append(text)
-                            else:
-                                yield {"type": "chunk", "text": text}
+                    yield {"type": "status", "message": _tool_status_message(name, args)}
+                    result_text, issues_found = _execute_tool(name, args)
+                    if issues_found:
+                        all_issues = issues_found
+                    messages.append(ToolMessage(content=result_text, tool_call_id=tc_id))
 
-                    # Handle end-of-stream for first call
-                    if is_tool:
-                        full_text = "".join(buffer)
-                        tool_call = parse_tool_call(full_text)
-                        if tool_call:
-                            tool_name = tool_call.get("tool", "")
-                            tool_args = tool_call.get("args", {})
-                            logger.info(f"Agent wants tool: {tool_name}({tool_args})")
+                first_turn = False
 
-                            yield {"type": "status", "message": _tool_status_message(tool_name, tool_args)}
-
-                            scratchpad += (
-                                f"\n--- Agent goi tool ---\n"
-                                f"Tool: {tool_name}\n"
-                                f"Args: {json.dumps(tool_args, ensure_ascii=False)}\n"
-                            )
-                            result_text, issues_found = _execute_tool_sync(tool_call)
-                            if issues_found:
-                                all_issues = issues_found
-                            scratchpad += f"\n--- Tool Result ---\n{result_text}\n"
-                            continue  # → next iteration (stream final answer)
-                        else:
-                            # Tool prefix detected but JSON parse failed — yield as text
-                            logger.warning("Tool prefix detected but JSON parse failed, yielding as text")
-                            for buf_text in buffer:
-                                yield {"type": "chunk", "text": buf_text}
-                    elif buffer:
-                        # Very short response (< PREFIX_BUFFER_SIZE), not flushed yet
-                        for buf_text in buffer:
-                            yield {"type": "chunk", "text": buf_text}
-
-                    # Direct answer (or parse failure) — done
-                    if result is not None:
-                        result.issues = all_issues
-                    return
-
-                else:
-                    # --- After tools: stream directly (no tool-call re-check) ---
-                    yield {"type": "status", "message": "Đang viết câu trả lờii..."}
-
-                    with Timer("LLM streaming call (final)"):
-                        for ai_chunk in llm.stream(messages):
-                            text = ai_chunk.content
-                            if text:
-                                yield {"type": "chunk", "text": text}
-
-                    if result is not None:
-                        result.issues = all_issues
-                    return
-
-            # Exhausted iterations
             if result is not None:
                 result.issues = all_issues
             return
 
         except Exception as e:
-            logger.error(f"Streaming error: {e}")
+            logger.error(f"Streaming error: {e}", exc_info=True)
             if result is not None:
                 result.error = str(e)
             return
