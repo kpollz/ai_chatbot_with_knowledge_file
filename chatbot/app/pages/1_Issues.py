@@ -380,9 +380,9 @@ with tab_create:
 
     with st.container(border=True):
         st.markdown("**Thời gian & Thông số**")
-        col_d1, col_d2, col_d3, col_d4 = st.columns(4)
+        col_d1, col_d2, col_d3, col_d4, col_d5 = st.columns(5)
         with col_d1:
-            # Calendar picker — Week & Year được tính tự động từ ngày này
+            # Calendar picker — Week & Year được tính ngầm từ ngày này khi lưu
             date_obj = st.date_input(
                 "Date 📅", value=None, format="YYYY-MM-DD", key="create_date"
             )
@@ -392,27 +392,18 @@ with tab_create:
             stop_time = st.text_input("Stop Time", placeholder="08:30", key="create_stop_time")
         with col_d4:
             total_time = st.text_input("Total Time", placeholder="30", key="create_total_time")
+        with col_d5:
+            pic = st.text_input("PIC (chỉ số)", placeholder="VD: 007", key="create_pic")
+            if pic and not pic.isdigit():
+                st.caption("⚠️ PIC chỉ được nhập số (có thể bắt đầu bằng 0).")
 
-        # Derive Date string + ISO week + year from the picked date
+        # Derive Date string + ISO week + year from the picked date (không hiển thị, chỉ lưu khi tạo)
         if date_obj:
             date_val = date_obj.strftime("%Y-%m-%d")
             week = date_obj.isocalendar()[1]
             year = date_obj.year
         else:
             date_val, week, year = None, None, None
-
-        col_w1, col_w2, col_w3 = st.columns(3)
-        with col_w1:
-            # No key: keep value driven by the date picker on every rerun
-            st.text_input("Week (tự tính)", value=str(week) if week else "—",
-                          disabled=True)
-        with col_w2:
-            st.text_input("Year (tự tính)", value=str(year) if year else "—",
-                          disabled=True)
-        with col_w3:
-            pic = st.text_input("PIC (chỉ số)", placeholder="VD: 007", key="create_pic")
-            if pic and not pic.isdigit():
-                st.caption("⚠️ PIC chỉ được nhập số (có thể bắt đầu bằng 0).")
 
     with st.container(border=True):
         st.markdown("**Nội dung vấn đề**")
