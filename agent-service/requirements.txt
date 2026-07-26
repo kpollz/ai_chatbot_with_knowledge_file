@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+ag-ui-langgraph
+langgraph
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
+langchain
+langchain-core
+langchain-openai
+langfuse>=4.0.0
+httpx
+python-dotenv
+pydantic

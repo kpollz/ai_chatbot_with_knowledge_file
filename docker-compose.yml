@@ -32,6 +32,34 @@ services:
       - ./issue-api/app:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8888 --reload
 
+  agent:
+    build: ./agent-service
+    container_name: machine-issue-agent
+    environment:
+      ISSUE_API_URL: http://issue-api:8888
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
+      # OpenAI-compatible endpoint. Callers normally send their own key in the
+      # x-openai-api-key header; this one is only a fallback.
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      # Conversation checkpoints. Sync psycopg URL, unlike the API's +asyncpg one.
+      CHECKPOINT_DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-issue_api}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
+    ports:
+      - "8700:8700"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      issue-api:
+        condition: service_started
+    volumes:
+      - ./agent-service/app:/app
+      # Agent primitives (prompt, tools, LLM factory) reused from the chatbot.
+      - ./chatbot/app:/chatbot_app
+
   chatbot:
     build: ./chatbot
     container_name: machine-issue-chatbot
