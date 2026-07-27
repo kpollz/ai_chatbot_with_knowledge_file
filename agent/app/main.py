@@ -31,11 +31,12 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from agent import graph  # config.py loads .env on the way in
+from config import DATABASE_URI
+from graph import MAX_ITERATIONS
+from langfuse_setup import langchain_handler
+from logger import logger
 
 AGENT_NAME = "machine_issue_solver"
-DATABASE_URI = os.getenv(
-    "DATABASE_URI", "postgresql://postgres:postgres@localhost:5432/agent_state"
-)
 
 # Opened in the lifespan, for the event-loop reason given above.
 _pool = AsyncConnectionPool(
@@ -45,6 +46,21 @@ _pool = AsyncConnectionPool(
     open=False,
     kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
 )
+
+
+def _run_config() -> dict:
+    """The RunnableConfig ag-ui copies into every run.
+
+    It adds ``configurable.thread_id`` per request; everything else is set once
+    here. Each step is a model call plus a tool call, hence 2*N + 1.
+    """
+    config: dict = {"recursion_limit": 2 * MAX_ITERATIONS + 1}
+
+    handler = langchain_handler()  # None when Langfuse is not configured
+    if handler:
+        config["callbacks"] = [handler]
+        logger.info("Langfuse tracing enabled")
+    return config
 
 
 @asynccontextmanager
@@ -78,6 +94,7 @@ add_langgraph_fastapi_endpoint(
         name=AGENT_NAME,
         description="Tra cứu sự cố máy móc nhà máy: hiện tượng, nguyên nhân, cách khắc phục.",
         graph=graph,
+        config=_run_config(),
     ),
     path="/",
 )

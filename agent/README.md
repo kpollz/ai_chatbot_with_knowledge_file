@@ -1,40 +1,31 @@
 # agent — Machine Issue Solver
 
-One agent, one source tree, two ways to reach it:
+A LangGraph agent served over the **AG-UI** protocol. Any AG-UI client can drive
+it by URL alone, which is the whole point: the platform registers an agent by
+pasting an address, nothing more.
 
-| Entrypoint | Serves | Port |
-| ---------- | ------ | ---- |
-| `app/main.py` | the agent over the **AG-UI** protocol, for any AG-UI client | 8123 |
-| `app/streamlit_app.py` | the Streamlit UI, until the CopilotKit front end replaces it | 8501 |
-
-Both import the same `graph.py` — prompt, `search_issues` tool, LLM factory — so
-there is one definition of the agent, not two. They previously lived in separate
-directories with the server bind-mounting the other's source; that is gone.
+There is no UI here. The Streamlit app that used to live in this tree was
+replaced by the AG-UI endpoint; the front end is a separate concern.
 
 ## Layout
 
 ```
 agent/
 ├── app/
-│   ├── main.py               AG-UI server: LangGraphAGUIAgent on FastAPI
-│   ├── agent.py              the compiled graph (create_react_agent)
-│   ├── graph.py              SYSTEM_PROMPT, search_issues tool, solve_issue_stream
-│   ├── llm.py                get_chat_model() — OpenAI-compatible endpoint
-│   ├── api_client.py         pooled HTTP client for the Issue API
-│   ├── config.py             environment configuration
-│   ├── langfuse_setup.py     Langfuse v4 handler + trace attributes
-│   ├── logger.py             logging + Timer
-│   ├── streamlit_app.py      Streamlit chat page
-│   ├── history.py            token estimation, context-window guards
-│   ├── conversation_store.py JSON session storage
-│   ├── feedback.py           star-rating widget → Langfuse scores
-│   └── pages/1_Issues.py     issue CRUD page
-├── Dockerfile                one image; compose picks the entrypoint
+│   ├── main.py            AG-UI server: LangGraphAGUIAgent on FastAPI
+│   ├── agent.py           the compiled graph (create_react_agent)
+│   ├── graph.py           SYSTEM_PROMPT + the search_issues tool
+│   ├── llm.py             get_chat_model() — OpenAI-compatible endpoint
+│   ├── api_client.py      pooled HTTP client for the Issue API
+│   ├── config.py          environment configuration
+│   ├── langfuse_setup.py  optional tracing
+│   └── logger.py          logging + Timer
+├── Dockerfile
 └── requirements.txt
 ```
 
 Modules import each other by bare name and the Dockerfile copies `app/` into the
-working directory, so no path setup is needed either way.
+working directory, so no path setup is needed.
 
 ## The agent
 
@@ -45,7 +36,12 @@ One tool:
 | ---- | --- |
 | `search_issues(machine_name, line_name, location?, serial?)` | issues for a machine on a line |
 
-It calls the **Issue API** over HTTP — no direct database access.
+It calls the **Issue API** over HTTP — no direct database access. Tool depth is
+bounded by `recursion_limit = 2 * MAX_ITERATIONS + 1`.
+
+The model must support client-side function calling. An endpoint that is itself
+an agent with its own built-in tools will ignore the `tools` parameter, and
+`search_issues` will never fire.
 
 ## AG-UI
 
@@ -85,17 +81,29 @@ SELECT thread_id, count(*) FROM checkpoints GROUP BY thread_id;
 
 The saver binds to the running event loop in its constructor, so it is built in
 the FastAPI lifespan and assigned to `graph.checkpointer` there; LangGraph reads
-that attribute on every run.
+that attribute on every run. Clients send only the new message — history is
+restored from the checkpoint keyed by `threadId`.
+
+### Tracing
+
+With `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` set, a
+`langfuse.langchain.CallbackHandler` is attached to the config the AG-UI agent
+copies into every run, so each LLM call and tool step appears as a nested
+observation. Without keys, tracing is a no-op.
+
+Traces are not yet grouped per conversation: `LangGraphAGUIAgent` takes one
+static config, and Langfuse reads `session_id` from per-run metadata that a
+static config cannot carry.
+
+### Scope
 
 The agent holds no user identity and no API keys. Authentication, accounts and
 per-user keys belong to the platform in front of it.
 
 ## Run
 
-Under Docker Compose both services come up together:
-
 ```bash
-docker compose up -d agent chatbot
+docker compose up -d agent
 ```
 
 Standalone, with the Issue API already running:
@@ -103,10 +111,7 @@ Standalone, with the Issue API already running:
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # then fill it in
-
-cd app
-uvicorn main:app --port 8123  # AG-UI
-streamlit run streamlit_app.py
+cd app && uvicorn main:app --port 8123
 ```
 
 ### Environment
@@ -118,17 +123,7 @@ streamlit run streamlit_app.py
 | `OPENAI_API_KEY` | key for that endpoint | — |
 | `OPENAI_MODEL` | model name sent to it | — |
 | `LLM_TEMPERATURE` | sampling temperature | `0` |
-| `DATABASE_URI` | Postgres for the checkpointer (AG-UI only) | `postgresql://postgres:postgres@localhost:5432/agent_state` |
-| `CONTEXT_WINDOW_LIMIT` | tokens before input is blocked (Streamlit only) | `128000` |
-| `CONTEXT_WARN_THRESHOLD` | tokens before a warning (Streamlit only) | `100000` |
-| `LANGFUSE_PUBLIC_KEY` | optional | — |
-| `LANGFUSE_SECRET_KEY` | optional | — |
+| `DATABASE_URI` | Postgres for the checkpointer | `postgresql://postgres:postgres@localhost:5432/agent_state` |
+| `LANGFUSE_PUBLIC_KEY` | optional — enables tracing | — |
+| `LANGFUSE_SECRET_KEY` | optional — enables tracing | — |
 | `LANGFUSE_HOST` | | `https://cloud.langfuse.com` |
-
-## Streamlit specifics
-
-- streaming responses with step-by-step status updates
-- conversation history within a session; token estimation with warn/block thresholds
-- star feedback per answer, scored into Langfuse
-- issue CRUD page
-- sessions auto-saved to `conversations/` as JSON

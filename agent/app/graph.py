@@ -1,36 +1,19 @@
-"""
-Machine Issue Solver — ReAct Agent (LangGraph prebuilt).
+"""Machine Issue Solver — the prompt and the tools.
 
-Uses ``langgraph.prebuilt.create_react_agent`` with an OpenAI-compatible
-``ChatOpenAI`` model and native tool calling — the standard ReAct loop is
-handled by LangGraph instead of a hand-rolled generator.
-
-A contextvar recorder carries the tool's structured results (issues found) out
-of the graph so the UI can show the "related issues" panel and feedback, the
-same role the old side-channel played. The streaming event interface
-(``status`` / ``chunk`` dicts + ``StreamResult``) is unchanged, so the Streamlit
-chat page needs no edits.
-
-Langfuse: the ReAct run is traced via the LangChain CallbackHandler (adopted
-from the chat-with-documents project); an outer @observe span owns the trace_id
-that the (unchanged) feedback mechanism scores against.
+``agent.py`` composes these into a ``create_react_agent`` graph; ``main.py``
+serves it. Tool results reach the client as AG-UI tool events, so nothing here
+needs a side-channel to carry them out of the run.
 """
 
-import contextvars
 from typing import Optional, List, Dict
 
-from langchain_core.messages import AIMessageChunk
 from langchain_core.tools import tool
-from langgraph.prebuilt import create_react_agent
-from langfuse import observe, get_client
 
-from llm import get_chat_model
-from langfuse_setup import langchain_handler, trace_attributes
 from api_client import search_issues_sync
 from logger import logger, Timer
 
-
-# Max tool-using steps before LangGraph stops (recursion_limit = 2*N + 1).
+# Max tool-using steps before LangGraph stops. main.py turns this into the run's
+# recursion_limit (2*N + 1: each step is a model call plus a tool call).
 MAX_ITERATIONS = 3
 
 SYSTEM_PROMPT = """Bạn là "Machine Issue Solver" — trợ lý kỹ thuật chuyên về các vấn đề máy móc trong nhà máy.
@@ -47,12 +30,6 @@ Quy tắc trả lời:
 - Trả lời bằng tiếng Việt nếu người dùng dùng tiếng Việt.
 - Ngắn gọn, rõ ràng, tập trung vào vấn đề.
 """
-
-# Side-channel: the tool pushes the issues it found into this list so the UI
-# (related-issues panel) and feedback can read them after the run.
-_issues_recorder: contextvars.ContextVar[Optional[List[Dict]]] = contextvars.ContextVar(
-    "issues_recorder", default=None
-)
 
 
 def format_issues_for_scratchpad(issues: List[Dict]) -> str:
@@ -93,12 +70,6 @@ def search_issues(machine_name: str, line_name: str,
         logger.error(f"Tool execution error: {e}")
         return f"Lỗi khi gọi tool 'search_issues': {e}"
 
-    rec = _issues_recorder.get()
-    if rec is not None:
-        rec.clear()
-        if issues:
-            rec.extend(issues)
-
     if not issues:
         desc = f"máy '{machine_name}' trên line '{line_name}'"
         if location:
@@ -110,113 +81,3 @@ def search_issues(machine_name: str, line_name: str,
 
 
 TOOLS = [search_issues]
-
-
-def _tool_status_message(tool_name: str) -> str:
-    """User-facing status shown while a tool runs."""
-    if tool_name == "search_issues":
-        return "Đang tra cứu cơ sở dữ liệu sự cố..."
-    return f"Đang thực hiện: {tool_name}..."
-
-
-def _build_messages(query: str, history: List[Dict[str, str]]) -> List[tuple]:
-    """Prior turns (memory) + current question, as (role, text) tuples.
-
-    The system prompt is supplied separately via create_react_agent(prompt=...).
-    """
-    msgs: List[tuple] = []
-    for h in history or []:
-        role = "user" if h.get("role") == "user" else "assistant"
-        content = (h.get("content") or "").strip()
-        if content:
-            msgs.append((role, content))
-    msgs.append(("user", query))
-    return msgs
-
-
-class StreamResult:
-    """Side-channel to pass metadata (issues, errors, trace_id) out of the stream generator."""
-    def __init__(self):
-        self.issues: List[Dict] = []
-        self.error: Optional[str] = None
-        self.trace_id: Optional[str] = None
-
-
-@observe(
-    name="agent_solve_issue",
-    transform_to_string=lambda events: "".join(
-        e.get("text", "") for e in events if isinstance(e, dict) and e.get("type") == "chunk"
-    ),
-)
-def solve_issue_stream(query: str, history: List[Dict[str, str]] = None,
-                       api_key: str = "", result: Optional[StreamResult] = None,
-                       session_id: str = None, user_id: str = None):
-    """
-    Streaming generator yielding event dicts for Streamlit rendering.
-
-    Event types:
-      {"type": "status", "message": "..."}  — progress indicator for UI
-      {"type": "chunk",  "text": "..."}     — text chunk to append to response
-
-    Drives a LangGraph ReAct agent (create_react_agent) and streams only the
-    assistant's answer tokens; tool-call chunks and tool observations are not
-    shown. Issues found by the tool are collected via a contextvar recorder.
-    """
-    logger.info(f"Processing query (streaming): {query}")
-    history = history or []
-
-    issues_box: List[Dict] = []
-    token = _issues_recorder.set(issues_box)
-
-    try:
-        llm = get_chat_model(api_key=api_key)
-        agent = create_react_agent(llm, TOOLS, prompt=SYSTEM_PROMPT)
-        messages = _build_messages(query, history)
-
-        config = {"recursion_limit": 2 * MAX_ITERATIONS + 1}
-        handler = langchain_handler()  # None when Langfuse is not configured
-        if handler:
-            config["callbacks"] = [handler]
-
-        with trace_attributes(session_id=session_id or "", user_id=user_id or "",
-                              trace_name="chat_query"):
-            if result is not None:
-                try:
-                    result.trace_id = get_client().get_current_trace_id()
-                except Exception:
-                    pass
-
-            yield {"type": "status", "message": "Đang phân tích câu hỏi..."}
-
-            announced_tools = set()
-            with Timer("ReAct agent stream"):
-                for chunk, _meta in agent.stream(
-                    {"messages": messages}, config=config, stream_mode="messages"
-                ):
-                    if not isinstance(chunk, AIMessageChunk):
-                        continue  # skip ToolMessage observations etc.
-
-                    for tcc in (getattr(chunk, "tool_call_chunks", None) or []):
-                        name = tcc.get("name")
-                        if name and name not in announced_tools:
-                            announced_tools.add(name)
-                            yield {"type": "status", "message": _tool_status_message(name)}
-
-                    if chunk.content:
-                        yield {"type": "chunk", "text": chunk.content}
-
-            if result is not None:
-                result.issues = list(issues_box)
-
-    except Exception as e:
-        logger.error(f"Streaming error: {e}", exc_info=True)
-        if result is not None:
-            result.error = str(e)
-    finally:
-        # NOTE: do NOT flush Langfuse here. Streamlit is a long-running process,
-        # so the SDK's background exporter sends traces off the request path.
-        # A synchronous flush per request would add a blocking network round-trip
-        # to the tail of every answer once Langfuse is enabled (see issue #3).
-        # A single flush at process exit is registered in langfuse_setup.
-        _issues_recorder.reset(token)
-    return

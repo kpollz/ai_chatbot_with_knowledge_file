@@ -14,12 +14,10 @@ import config
 from logger import logger
 
 
-def get_chat_model(api_key: Optional[str] = None,
-                   temperature: Optional[float] = None) -> BaseChatModel:
+def get_chat_model(temperature: Optional[float] = None) -> BaseChatModel:
     """Build the OpenAI-compatible chat model.
 
     Args:
-        api_key: overrides ``OPENAI_API_KEY`` (e.g. the sidebar key).
         temperature: overrides ``config.LLM_TEMPERATURE``.
     """
     from langchain_openai import ChatOpenAI  # lazy import
@@ -32,7 +30,7 @@ def get_chat_model(api_key: Optional[str] = None,
 
     return ChatOpenAI(
         model=config.OPENAI_MODEL,
-        api_key=api_key or config.OPENAI_API_KEY or "not-needed",
+        api_key=config.OPENAI_API_KEY or "not-needed",
         base_url=config.OPENAI_BASE_URL or None,
         temperature=temp,
         streaming=True,
