@@ -14,19 +14,21 @@ CopilotKit connects with `LangGraphHttpAgent({ url })`.
 ## Layout
 
 ```
-app/
-├── main.py            AG-UI server: LangGraphAGUIAgent on FastAPI
-├── agent.py           the compiled graph (create_react_agent)
-├── graph.py           SYSTEM_PROMPT + the search_issues tool
-├── llm.py             get_chat_model() — OpenAI-compatible endpoint
-├── api_client.py      pooled HTTP client for the Issue API
-├── config.py          environment configuration
-├── langfuse_setup.py  optional tracing
-└── logger.py          logging + Timer
+main.py               AG-UI server: LangGraphAGUIAgent on FastAPI
+src/
+├── graph.py          the compiled graph (create_react_agent)
+├── prompts.py        SYSTEM_PROMPT
+├── tools.py          search_issues + TOOLS
+├── llm.py            get_chat_model() — OpenAI-compatible endpoint
+├── api_client.py     pooled HTTP client for the Issue API
+├── config.py         environment configuration
+├── langfuse_setup.py optional tracing
+└── logger.py         logging + Timer
 ```
 
-Modules import each other by bare name; the Dockerfile copies `app/` into the
-working directory.
+One module per role, which is how LangGraph's own project templates and
+CopilotKit's Python examples both lay an agent out. Sub-folders start earning
+their keep when a role outgrows one file — `tools/` once there are several tools.
 
 ## Behaviour
 
@@ -63,7 +65,7 @@ Standalone, with the Issue API already running:
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-cd app && uvicorn main:app --port 8123
+uvicorn main:app --port 8123
 ```
 
 ## Environment

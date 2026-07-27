@@ -34,11 +34,11 @@ The front end is a separate project; this repo ships the agent.
 ## Quick start
 
 ```bash
-cp agent/.env.example agent/.env         # OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL
-cp issue-api/.env.example issue-api/.env
-
+cp .env.example .env      # fill in OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL
 docker compose up -d
 ```
+
+Every service reads that one `.env`.
 
 | | |
 | --- | --- |
@@ -51,7 +51,7 @@ Locally instead of Docker:
 pip install -r agent/requirements.txt -r issue-api/requirements.txt openpyxl
 docker compose up -d postgres
 cd issue-api/app && python main.py           # terminal 2
-cd agent/app && uvicorn main:app --port 8123 # terminal 3
+cd agent && uvicorn main:app --port 8123      # terminal 3
 ```
 
 ## Structure

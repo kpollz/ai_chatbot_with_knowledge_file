@@ -9,9 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Flat layout: the modules sit in the working directory and import each other by
-# bare name, so no path setup is needed.
-COPY app/ .
+COPY main.py .
+COPY src/ ./src/
+
+ENV PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8123
 

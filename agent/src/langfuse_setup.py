@@ -12,8 +12,8 @@ import atexit
 
 from langfuse import get_client
 
-from config import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY
-from logger import logger
+from src.config import LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY
+from src.logger import logger
 
 
 def is_configured() -> bool:
