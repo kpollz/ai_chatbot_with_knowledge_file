@@ -10,8 +10,8 @@ from typing import Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-import config
-from logger import logger
+from src import config
+from src.logger import logger
 
 
 def get_chat_model(temperature: Optional[float] = None) -> BaseChatModel:

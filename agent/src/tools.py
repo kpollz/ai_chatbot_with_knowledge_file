@@ -1,35 +1,16 @@
-"""Machine Issue Solver — the prompt and the tools.
+"""Tools the agent can call.
 
-``agent.py`` composes these into a ``create_react_agent`` graph; ``main.py``
-serves it. Tool results reach the client as AG-UI tool events, so nothing here
-needs a side-channel to carry them out of the run.
+Everything here reaches the database through the Issue API — the agent holds no
+database connection of its own. Tool results travel back to the client as AG-UI
+tool events.
 """
 
 from typing import Optional, List, Dict
 
 from langchain_core.tools import tool
 
-from api_client import search_issues_sync
-from logger import logger, Timer
-
-# Max tool-using steps before LangGraph stops. main.py turns this into the run's
-# recursion_limit (2*N + 1: each step is a model call plus a tool call).
-MAX_ITERATIONS = 3
-
-SYSTEM_PROMPT = """Bạn là "Machine Issue Solver" — trợ lý kỹ thuật chuyên về các vấn đề máy móc trong nhà máy.
-
-Nhiệm vụ của bạn:
-- Trả lời câu hỏi về vấn đề máy móc dựa trên dữ liệu trong cơ sở dữ liệu.
-- Trả lời câu hỏi chung về bản thân và khả năng của bạn.
-- Dùng lịch sử hội thoại để hiểu ngữ cảnh (ví dụ nếu người dùng đã nói về Line 2 trước đó thì không cần hỏi lại).
-
-Khi cần dữ liệu thực tế về sự cố của một máy, hãy dùng công cụ `search_issues`.
-Sau khi có kết quả công cụ, hãy trả lời người dùng tự nhiên dựa trên kết quả, KHÔNG bịa thông tin.
-
-Quy tắc trả lời:
-- Trả lời bằng tiếng Việt nếu người dùng dùng tiếng Việt.
-- Ngắn gọn, rõ ràng, tập trung vào vấn đề.
-"""
+from src.api_client import search_issues_sync
+from src.logger import logger, Timer
 
 
 def format_issues_for_scratchpad(issues: List[Dict]) -> str:

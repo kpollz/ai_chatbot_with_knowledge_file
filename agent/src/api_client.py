@@ -9,8 +9,8 @@ from typing import List, Dict
 import atexit
 import httpx
 
-from config import ISSUE_API_URL
-from logger import logger
+from src.config import ISSUE_API_URL
+from src.logger import logger
 
 
 # Shared client with a connection pool — reused across requests so calls to the

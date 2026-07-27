@@ -1,21 +1,14 @@
 """Serve the agent over the AG-UI protocol.
 
-Follows CopilotKit's official ``langgraph-fastapi`` example: the graph lives in
-``agent.py``, this file wraps it in ``LangGraphAGUIAgent`` and mounts it on
-FastAPI with ``add_langgraph_fastapi_endpoint``. Any AG-UI client — CopilotKit's
-``LangGraphHttpAgent`` among them — can drive it by URL alone.
+The graph lives in ``src/``; this file wraps it in
+``LangGraphAGUIAgent`` and mounts it on FastAPI with
+``add_langgraph_fastapi_endpoint``, so any AG-UI client can drive it by URL.
 
-Two deliberate departures from that example:
+``AsyncPostgresSaver`` binds to the running event loop in ``__init__``, so the
+checkpointer is built in the lifespan and assigned to ``graph.checkpointer``
+there — LangGraph reads that attribute on every run.
 
-* it uses ``MemorySaver``, so threads die with the process. We attach a Postgres
-  checkpointer instead, which survives restarts and is shared across replicas.
-* it builds the checkpointer beside the graph. ``AsyncPostgresSaver`` binds to
-  the running event loop in ``__init__``, so ours is built in the lifespan and
-  assigned to ``graph.checkpointer`` there — LangGraph reads that attribute per
-  run.
-
-The agent holds no user identity and no API keys; the platform in front of it
-owns authentication and per-user keys.
+See ``docs/agui-integration.md`` for the reasoning behind this setup.
 """
 
 import os
@@ -30,12 +23,12 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from agent import graph  # config.py loads .env on the way in
-from config import DATABASE_URI
-from graph import MAX_ITERATIONS
-from langfuse_setup import langchain_handler
-from logger import logger
+from src.config import DATABASE_URI
+from src.graph import MAX_ITERATIONS, graph
+from src.langfuse_setup import langchain_handler
+from src.logger import logger
 
+# The identifier an AG-UI client registers the agent under.
 AGENT_NAME = "machine_issue_solver"
 
 # Opened in the lifespan, for the event-loop reason given above.
