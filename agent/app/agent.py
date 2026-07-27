@@ -1,8 +1,6 @@
 """The compiled graph, for the AG-UI server in ``main.py``.
 
-Prompt, tools and the LLM factory come from the modules beside this one, so the
-Streamlit app and the AG-UI agent run the same agent rather than two copies of
-it.
+Prompt, tools and the LLM factory come from the modules beside this one.
 
 Nothing supplies a checkpointer here — unlike the ``langgraph dev`` route, where
 the server provides one — so ``main.py`` attaches a Postgres one at startup.

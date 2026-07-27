@@ -35,10 +35,7 @@ services:
       - ./issue-api/app:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8888 --reload
 
-  # Two services, one image built from ./agent — they share the graph, so they
-  # share a source tree. Each picks its own entrypoint below.
-  #
-  # First: the agent over AG-UI, drivable by any AG-UI client (CopilotKit).
+  # The agent over AG-UI, drivable by any AG-UI client (CopilotKit).
   # Conversation threads live in their own Postgres database — the agent itself
   # holds no user identity and no API keys; the platform in front owns those.
   agent:
@@ -66,24 +63,3 @@ services:
     volumes:
       - ./agent/app:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8123
-
-  # Second: the Streamlit UI, until the CopilotKit front end replaces it.
-  chatbot:
-    build: ./agent
-    container_name: machine-issue-chatbot
-    environment:
-      ISSUE_API_URL: http://issue-api:8888
-      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
-      # OpenAI-compatible endpoint (native tool calling)
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
-      CONTEXT_WINDOW_LIMIT: ${CONTEXT_WINDOW_LIMIT:-128000}
-      CONTEXT_WARN_THRESHOLD: ${CONTEXT_WARN_THRESHOLD:-100000}
-    ports:
-      - "8501:8501"
-    depends_on:
-      - issue-api
-    volumes:
-      - ./agent/app:/app
-    command: streamlit run streamlit_app.py --server.port=8501 --server.address=0.0.0.0

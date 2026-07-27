@@ -1,7 +1,8 @@
-"""
-HTTP client for Issue API (Sub-project 2)
+"""HTTP client for the Issue API (Sub-project 2).
 
-Replaces direct SQLite queries — all database access goes through the Issue API.
+The agent never touches the database directly — every read goes through the API.
+Only what the ``search_issues`` tool needs lives here; the CRUD helpers went with
+the UI pages that were their sole caller.
 """
 
 from typing import List, Dict
@@ -14,16 +15,14 @@ from logger import logger
 
 # Shared client with a connection pool — reused across requests so calls to the
 # Issue API keep TCP connections alive instead of doing a fresh handshake each
-# time. httpx.Client is thread-safe for concurrent requests (Streamlit runs each
-# session in its own thread). Independent of the LLM API key. Closed at exit.
+# time. httpx.Client is thread-safe, and the tool runs in a worker thread since
+# it is a sync function called from an async graph. Closed at exit.
 _client = httpx.Client(
     timeout=30,
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
 )
 atexit.register(_client.close)
 
-
-# ---- Sync operations ----
 
 def _sync_request(method: str, path: str, params: dict = None, json_data: dict = None):
     """Sync HTTP request helper."""
@@ -41,88 +40,9 @@ def _sync_request(method: str, path: str, params: dict = None, json_data: dict =
         raise
 
 
-def get_issues_sync(skip: int = 0, limit: int = 500) -> List[Dict]:
-    return _sync_request("GET", "/issues/", params={"skip": skip, "limit": limit})
-
-
-def get_issues_count_sync() -> int:
-    return _sync_request("GET", "/issues/count")
-
-
-def get_issue_sync(issue_id: int) -> Dict:
-    return _sync_request("GET", f"/issues/{issue_id}")
-
-
-def get_symptoms_sync(machine_id: int) -> List[str]:
-    """Distinct symptoms recorded for a machine — for the symptom dropdown."""
-    return _sync_request("GET", "/issues/symptoms", params={"machine_id": machine_id})
-
-
-def create_issue_sync(data: Dict) -> Dict:
-    return _sync_request("POST", "/issues/", json_data=data)
-
-
-def update_issue_sync(issue_id: int, data: Dict) -> Dict:
-    return _sync_request("PUT", f"/issues/{issue_id}", json_data=data)
-
-
-def delete_issue_sync(issue_id: int) -> None:
-    _sync_request("DELETE", f"/issues/{issue_id}")
-
-
-def get_lines_sync() -> List[Dict]:
-    return _sync_request("GET", "/lines/")
-
-
-def get_teams_sync() -> List[Dict]:
-    """List all teams."""
-    return _sync_request("GET", "/teams/")
-
-
-def find_team_by_name_sync(team_name: str) -> Dict:
-    """Find a team by name. Raises HTTPError if not found."""
-    return _sync_request("GET", "/teams/find/by-name", params={"team_name": team_name})
-
-
-def create_team_sync(team_name: str) -> Dict:
-    """Create a new team."""
-    return _sync_request("POST", "/teams/", json_data={"TeamName": team_name})
-
-
-def find_line_by_name_sync(line_name: str, team_id: int) -> Dict:
-    """Find a line by number within a team. Raises HTTPError if not found."""
-    return _sync_request("GET", "/lines/find/by-name", params={"line_name": line_name, "team_id": team_id})
-
-
-def find_machine_by_details_sync(machine_name: str, line_id: int, location: str = None, serial: str = None) -> List[Dict]:
-    """Find machines by name within a line."""
-    params = {"machine_name": machine_name, "line_id": line_id}
-    if location is not None:
-        params["location"] = location
-    if serial is not None:
-        params["serial"] = serial
-    return _sync_request("GET", "/machines/find/by-details", params=params)
-
-
-def create_machine_sync(machine_name: str, line_id: int, location: str = None, serial: str = None) -> Dict:
-    """Create a new machine under a line."""
-    data = {"MachineName": machine_name, "LineID": line_id}
-    if location is not None:
-        data["Location"] = location
-    if serial is not None:
-        data["Serial"] = serial
-    return _sync_request("POST", "/machines/", json_data=data)
-
-
-def get_machines_sync() -> List[Dict]:
-    return _sync_request("GET", "/machines/")
-
-
-# ---- Sync tool functions (for streaming graph) ----
-
 def search_issues_sync(machine_name: str, line_name: str,
                        location: str = None, serial: str = None) -> List[Dict]:
-    """Sync version of search_issues for streaming flow."""
+    """Issues recorded for one machine on one line — backs the agent's tool."""
     params = {"machine_name": machine_name, "line_name": line_name}
     if location:
         params["location"] = location
@@ -132,17 +52,3 @@ def search_issues_sync(machine_name: str, line_name: str,
     logger.info(f"Issue API returned {len(issues)} issues for '{machine_name}' on '{line_name}'"
                 f"{f' location={location}' if location else ''}{f' serial={serial}' if serial else ''}")
     return issues
-
-
-def import_issue_sync(data: Dict) -> Dict:
-    """
-    Import a full Excel row via POST /issues/import.
-    Auto-creates Line, Team, Machine if not found.
-    Returns dict with IssueID and what was created.
-    """
-    result = _sync_request("POST", "/issues/import", json_data=data)
-    logger.info(f"Imported issue ID={result.get('IssueID')}, "
-                f"created_line={result.get('created_line')}, "
-                f"created_team={result.get('created_team')}, "
-                f"created_machine={result.get('created_machine')}")
-    return result
