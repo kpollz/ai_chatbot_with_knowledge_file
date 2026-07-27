@@ -40,22 +40,25 @@ This guide helps AI coding agents understand and work with this project effectiv
 
 ```
 machine-issue-solver/
-├── chatbot/                    # Sub-project 1: Streamlit Chatbot
+├── agent/                    # Sub-project 1: the agent (AG-UI + Streamlit)
 │   ├── app/
-│   │   ├── streamlit_app.py    # Main entry: Chat UI + sidebar
-│   │   ├── graph.py            # ReAct Agent (LangGraph + streaming)
-│   │   ├── company_chat_model.py  # LangChain BaseChatModel for Company LLM
+│   │   ├── main.py             # AG-UI server: LangGraphAGUIAgent on FastAPI (8123)
+│   │   ├── agent.py            # compiled graph (create_react_agent)
+│   │   ├── graph.py            # SYSTEM_PROMPT, search_issues tool, solve_issue_stream
+│   │   ├── llm.py              # get_chat_model() — OpenAI-compatible endpoint
+│   │   ├── streamlit_app.py    # Chat UI + sidebar (8501)
 │   │   ├── api_client.py       # HTTP client for Issue API
 │   │   ├── config.py           # Environment configuration
 │   │   ├── history.py          # Token estimation & context window management
 │   │   ├── conversation_store.py  # JSON file storage for conversations
-│   │   ├── feedback.py         # Default-10 feedback widget + Langfuse scores
+│   │   ├── feedback.py         # Star feedback widget + Langfuse scores
 │   │   ├── logger.py           # Logging + Timer context manager
 │   │   ├── langfuse_setup.py   # Langfuse SDK v4 utilities
 │   │   └── pages/
 │   │       └── 1_Issues.py     # Issue CRUD management page
 │   ├── .env.example            # Template for environment variables
 │   ├── requirements.txt
+│   ├── Dockerfile
 │   └── README.md
 │
 ├── issue-api/                  # Sub-project 2: FastAPI Issue Service
@@ -85,7 +88,7 @@ machine-issue-solver/
 
 ## Configuration
 
-### Chatbot (`chatbot/.env`)
+### Chatbot (`agent/.env`)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -123,7 +126,7 @@ python -m venv venv
 source venv/bin/activate
 
 # Install dependencies for both sub-projects
-pip install -r chatbot/requirements.txt
+pip install -r agent/requirements.txt
 pip install -r issue-api/requirements.txt
 
 # Install additional dependency for Excel import
@@ -134,10 +137,10 @@ pip install openpyxl
 
 ```bash
 # Copy environment templates
-cp chatbot/.env.example chatbot/.env
+cp agent/.env.example agent/.env
 cp issue-api/.env.example issue-api/.env
 
-# Edit chatbot/.env → set COMPANY_LLM_API_KEY, MODEL_ID, MODEL_URL
+# Edit agent/.env → set COMPANY_LLM_API_KEY, MODEL_ID, MODEL_URL
 # Edit issue-api/.env → set DATABASE_URL if needed
 ```
 
@@ -347,12 +350,12 @@ The import endpoint (`POST /issues/import`) auto-creates Team, Line, Machine if 
 1. Add tool function in `api_client.py` (sync version for streaming)
 2. Add endpoint in `issue-api/app/routes.py`
 3. Add CRUD function in `issue-api/app/crud.py`
-4. Update `VALID_TOOLS` and `SYSTEM_PROMPT` in `chatbot/app/graph.py`
+4. Update `VALID_TOOLS` and `SYSTEM_PROMPT` in `agent/app/graph.py`
 5. Add tool execution in `_execute_tool_sync()` in `graph.py`
 
 ### Adding a New Page to Streamlit
 
-1. Create file in `chatbot/app/pages/2_PageName.py` (number prefix controls order)
+1. Create file in `agent/app/pages/2_PageName.py` (number prefix controls order)
 2. Add `sys.path.insert(0, str(Path(__file__).parent.parent))` at top
 3. Use `st.set_page_config()` and standard Streamlit patterns
 
@@ -383,13 +386,13 @@ See `issue-api/MIGRATION.md` for detailed migration notes.
 
 | What you need | Where to look |
 |---------------|---------------|
-| Environment variables | `chatbot/config.py`, `issue-api/config.py` |
-| LLM model configuration | `chatbot/config.py` (COMPANY_MODELS dict) |
+| Environment variables | `agent/config.py`, `issue-api/config.py` |
+| LLM model configuration | `agent/config.py` (COMPANY_MODELS dict) |
 | API endpoint definitions | `issue-api/app/routes.py` |
 | Database queries | `issue-api/app/crud.py` |
-| Agent behavior/prompt | `chatbot/app/graph.py` (SYSTEM_PROMPT) |
-| UI layout | `chatbot/app/streamlit_app.py` |
-| Issue management UI | `chatbot/app/pages/1_Issues.py` |
+| Agent behavior/prompt | `agent/app/graph.py` (SYSTEM_PROMPT) |
+| UI layout | `agent/app/streamlit_app.py` |
+| Issue management UI | `agent/app/pages/1_Issues.py` |
 | Docker setup | `issue-api/docker-compose.yml` |
 | Excel import | `import_excel.py` |
 | Test data generation | `fake_excel.py` |

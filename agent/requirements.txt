@@ -1,0 +1,33 @@
+# One image serves both entrypoints: the AG-UI agent (main.py) and the Streamlit
+# app (streamlit_app.py). They share the graph, so they share dependencies.
+#
+# The agent stack is pinned to the set verified working. CopilotKit's official
+# example pins the same way, and warns that copilotkit can otherwise pull in a
+# different ag-ui-langgraph than the endpoint helper expects.
+
+# --- agent core (used by both entrypoints) ---
+langgraph==1.2.9
+# Meta package — required by langfuse.langchain CallbackHandler (agent tracing)
+langchain==1.3.14
+langchain-openai==1.4.1
+langchain-core
+langchain-community
+httpx==0.28.1
+requests
+python-dotenv==1.2.2
+pydantic==2.13.4
+langfuse==4.14.1
+
+# --- AG-UI server (main.py) ---
+fastapi==0.140.0
+uvicorn[standard]==0.51.0
+copilotkit==0.1.94
+ag-ui-langgraph[fastapi]==0.0.42
+ag-ui-protocol==0.1.19
+
+# Threads live in Postgres, not in the process.
+langgraph-checkpoint-postgres==3.1.0
+psycopg[binary,pool]==3.3.4
+
+# --- Streamlit app (streamlit_app.py) ---
+streamlit>=1.45  # accept_new_options cho selectbox (dropdown + gõ mới)

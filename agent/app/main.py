@@ -1,7 +1,7 @@
 """Serve the agent over the AG-UI protocol.
 
 Follows CopilotKit's official ``langgraph-fastapi`` example: the graph lives in
-``src/agent.py``, this file wraps it in ``LangGraphAGUIAgent`` and mounts it on
+``agent.py``, this file wraps it in ``LangGraphAGUIAgent`` and mounts it on
 FastAPI with ``add_langgraph_fastapi_endpoint``. Any AG-UI client — CopilotKit's
 ``LangGraphHttpAgent`` among them — can drive it by URL alone.
 
@@ -20,17 +20,6 @@ owns authentication and per-user keys.
 
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-# Load .env from the repo root BEFORE importing src.agent — that import builds
-# the chat model at module load, which needs the LLM settings already present.
-# Under Docker Compose the environment is injected instead and no file is found.
-for _env in (Path(__file__).parent.parent / ".env", Path(".env")):
-    if _env.is_file():
-        load_dotenv(_env)
-        break
 
 import uvicorn
 from ag_ui_langgraph import add_langgraph_fastapi_endpoint
@@ -41,7 +30,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from src.agent import graph
+from agent import graph  # config.py loads .env on the way in
 
 AGENT_NAME = "machine_issue_solver"
 DATABASE_URI = os.getenv(
