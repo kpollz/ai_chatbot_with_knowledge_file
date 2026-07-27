@@ -23,7 +23,7 @@ AI-powered chatbot for diagnosing and resolving machine issues in a factory envi
 ```
 
 Three services managed from the repo root:
-- **[Chatbot](chatbot/)** — Streamlit app with LLM-powered chat and issue management UI
+- **[Agent](agent/)** — the LangGraph agent: an AG-UI endpoint for CopilotKit-style clients, plus a Streamlit UI
 - **[Issue API](issue-api/)** — FastAPI service owning all database access
 - **PostgreSQL** — Relational database for teams, lines, machines and issues
 
@@ -40,7 +40,7 @@ python -m venv venv
 source venv/bin/activate
 
 # Install both sub-projects
-pip install -r chatbot/requirements.txt
+pip install -r agent/requirements.txt
 pip install -r issue-api/requirements.txt
 pip install openpyxl
 ```
@@ -49,8 +49,8 @@ pip install openpyxl
 
 ```bash
 # Chatbot config
-cp chatbot/.env.example chatbot/.env
-# Edit chatbot/.env → set COMPANY_LLM_API_KEY, COMPANY_LLM_MODEL_ID, COMPANY_LLM_MODEL_URL
+cp agent/.env.example agent/.env
+# Edit agent/.env → set COMPANY_LLM_API_KEY, COMPANY_LLM_MODEL_ID, COMPANY_LLM_MODEL_URL
 
 # Issue API config
 cp issue-api/.env.example issue-api/.env
@@ -104,16 +104,18 @@ Access points:
 
 ```
 machine-issue-solver/
-├── chatbot/                    # Sub-project 1: Streamlit Chatbot
+├── agent/                    # Sub-project 1: the agent (AG-UI + Streamlit)
 │   ├── app/
-│   │   ├── streamlit_app.py    # Chat UI + sidebar
-│   │   ├── graph.py            # ReAct Agent (streaming generator)
-│   │   ├── company_chat_model.py  # LangChain BaseChatModel for Company LLM
+│   │   ├── main.py             # AG-UI server (FastAPI, port 8123)
+│   │   ├── agent.py            # compiled graph (create_react_agent)
+│   │   ├── graph.py            # SYSTEM_PROMPT, search_issues, solve_issue_stream
+│   │   ├── llm.py              # get_chat_model() — OpenAI-compatible endpoint
+│   │   ├── streamlit_app.py    # Chat UI + sidebar (port 8501)
 │   │   ├── api_client.py       # HTTP client for Issue API
 │   │   ├── config.py           # Configuration
 │   │   ├── history.py          # Token estimation
 │   │   ├── conversation_store.py  # JSON session storage
-│   │   ├── feedback.py         # Default-10 feedback widget
+│   │   ├── feedback.py         # Star feedback widget
 │   │   ├── logger.py           # Logging + Timer
 │   │   ├── langfuse_setup.py   # Langfuse SDK utilities
 │   │   └── pages/
