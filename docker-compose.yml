@@ -6,10 +6,13 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: ${DB_NAME:-issue_api}
+      # Read by the init script below, which creates the agent's own database.
+      AGENT_DB_NAME: ${AGENT_DB_NAME:-agent_state}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - ./issue-api/postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 10s
@@ -32,33 +35,34 @@ services:
       - ./issue-api/app:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8888 --reload
 
+  # The agent, served over AG-UI. Any AG-UI client (CopilotKit) can drive it.
+  # Conversation threads live in their own Postgres database — the agent itself
+  # holds no user identity and no API keys; the platform in front owns those.
   agent:
     build: ./agent-service
     container_name: machine-issue-agent
     environment:
       ISSUE_API_URL: http://issue-api:8888
       LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
-      # OpenAI-compatible endpoint. Callers normally send their own key in the
-      # x-openai-api-key header; this one is only a fallback.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
-      # Conversation checkpoints. Sync psycopg URL, unlike the API's +asyncpg one.
-      CHECKPOINT_DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-issue_api}
+      # Its own database: the checkpointer owns the schema there, so it must not
+      # share one with the Issue API.
+      DATABASE_URI: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${AGENT_DB_NAME:-agent_state}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
     ports:
-      - "8700:8700"
+      - "8123:8123"
     depends_on:
       postgres:
         condition: service_healthy
       issue-api:
         condition: service_started
     volumes:
-      - ./agent-service/app:/app
       # Agent primitives (prompt, tools, LLM factory) reused from the chatbot.
-      - ./chatbot/app:/chatbot_app
+      - ./chatbot/app:/chatbot/app:ro
 
   chatbot:
     build: ./chatbot

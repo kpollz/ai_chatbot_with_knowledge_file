@@ -1,74 +1,62 @@
-# Agent Service (AG-UI)
+# agent-service — the Machine Issue Solver, spoken over AG-UI
 
-Serves the machine-issue-solver LangGraph agent over the **AG-UI protocol**, so
-any AG-UI client — CopilotKit among them — can run it. This is the pilot of the
-"one agent-service per project" pattern; the Streamlit app in `../chatbot` keeps
-working unchanged and is untouched by this service.
+A plain FastAPI process that mounts the LangGraph agent behind the AG-UI
+protocol. Any AG-UI client can drive it by URL alone, which is the whole point:
+the platform registers an agent by pasting an address, nothing more.
+
+This follows CopilotKit's official
+[`langgraph-fastapi`](https://github.com/CopilotKit/CopilotKit/tree/main/examples/integrations/langgraph-fastapi)
+example rather than the `langgraph-python` one. Both exist upstream and differ
+in exactly one thing — how the Python agent is run:
+
+|                     | `langgraph-python`                          | `langgraph-fastapi` (this)             |
+| ------------------- | ------------------------------------------- | -------------------------------------- |
+| Run                 | `langgraph dev` (CLI, needs Docker)         | `uvicorn main:app`                     |
+| Server code         | none                                        | this file, ~40 lines                   |
+| Protocol to the FE  | LangGraph Platform REST                     | AG-UI directly                         |
+| CopilotKit client   | `LangGraphAgent({deploymentUrl, graphId})`  | `LangGraphHttpAgent({url})`            |
+| Checkpointer        | supplied by the server                      | ours to choose                         |
+
+Upstream's own Dockerfile makes the case for this variant: it deletes the
+`LangGraphAgent` route, swaps in an HTTP one and drops `langgraph-cli` entirely,
+because that CLI needs Docker-in-Docker. Running the licensed LangGraph Server
+instead fails at boot with `License verification failed`. A FastAPI process has
+neither problem.
+
+## Layout
 
 ```
-AG-UI client ──HTTP/SSE──► agent-service :8700 ──► Issue API :8888 ──► Postgres
-                                  │
-                                  └── checkpoints (Postgres, same DB)
+main.py         FastAPI app: LangGraphAGUIAgent + add_langgraph_fastapi_endpoint
+src/agent.py    the graph — create_react_agent over the shared prompt and tools
 ```
 
-## What is different from the Streamlit path
+The prompt, the `search_issues` tool and the LLM factory are imported from
+`chatbot/app/` (bind-mounted at `/chatbot/app`) so there is one definition of
+the agent, not two.
 
-| | `chatbot/` (Streamlit) | `agent-service/` (this) |
-|---|---|---|
-| Graph | rebuilt per call | compiled once, shared |
-| Model | baked in at build time | resolved per run from the caller's key |
-| Memory | client resends history | checkpointer, keyed by `thread_id` |
-| Output | Streamlit events | AG-UI events over SSE |
+## Threads
 
-The prompt, the `search_issues` tool, the LLM factory and the Langfuse setup are
-**imported** from `../chatbot/app` (mounted at `/chatbot_app`, on `PYTHONPATH`),
-not copied — there is one definition of the agent's behaviour.
+Where the upstream example uses `MemorySaver` — a dictionary in RAM, gone on
+restart and invisible to other replicas — this service attaches an
+`AsyncPostgresSaver`. Threads land in the `agent_state` database, survive
+restarts and are queryable:
 
-## Run
-
-```bash
-docker compose up -d agent          # from the repo root
-curl localhost:8700/health          # {"status":"ok","agent":"machine_issue_solver"}
+```sql
+SELECT thread_id, count(*) FROM checkpoints GROUP BY thread_id;
 ```
 
-Config: copy `.env.example` to `.env` (or set the vars in `docker-compose.yml`).
+The saver binds to the running event loop in its constructor, so it is built in
+the FastAPI lifespan and assigned to `graph.checkpointer` there; LangGraph reads
+that attribute on every run.
 
-## Calling it
+## Endpoints
 
-`POST /` with a `RunAgentInput` body and an SSE `accept` header. Each user sends
-**their own** LLM API key in the `x-openai-api-key` header (BYOK) — the server's
-`OPENAI_API_KEY` is only a fallback.
+| Method | Path      | |
+| ------ | --------- | --- |
+| `POST` | `/`       | the AG-UI endpoint |
+| `GET`  | `/health` | liveness |
 
-```jsonc
-{
-  "threadId": "<uuid>",     // same id on later turns = same conversation
-  "runId": "<uuid>",
-  "state": {}, "messages": [{"id": "<uuid>", "role": "user", "content": "..."}],
-  "tools": [], "context": [], "forwardedProps": {}
-}
-```
+## Scope
 
-Send only the *new* message on later turns — the checkpointer supplies the rest.
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `app/server.py` | FastAPI app, AG-UI endpoint, BYOK middleware, lifespan |
-| `app/agent_graph.py` | Compiled ReAct graph + per-run model resolution |
-| `app/checkpointer.py` | Async Postgres checkpointer (opened in the lifespan) |
-| `app/request_context.py` | Per-request API key (ContextVar) + context schema |
-| `app/agent_config.py` | Server-only settings (checkpoint DB, port, key header) |
-
-Module names are prefixed (`agent_graph`, `agent_config`) so they cannot shadow
-the reused `chatbot/app/graph.py` and `config.py` on `PYTHONPATH`.
-
-## Notes
-
-- **Checkpoint tables** (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`)
-  live in the same database as the Issue API; the names do not collide.
-  `CHECKPOINT_DATABASE_URL` uses the sync `postgresql://` driver, unlike the
-  Issue API's `postgresql+asyncpg://`.
-- **Tool calling depends on the model.** `hermes-agent` is a self-contained agent
-  that ignores client-supplied tools, so `search_issues` will not fire under it.
-  Point `OPENAI_MODEL` at a plain function-calling model to exercise the tool.
+The agent holds no user identity and no API keys. Authentication, accounts and
+per-user keys belong to the platform in front of it.
