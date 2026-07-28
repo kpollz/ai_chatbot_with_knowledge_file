@@ -30,7 +30,13 @@ def _dynamic_model(state: object, runtime: object) -> object:
     2. Contextvar ``_request_api_key`` — fallback set by FastAPI middleware.
 
     Falls back to the global ``OPENAI_API_KEY`` env var if neither is present.
+
+    IMPORTANT: Returns a model with tools already bound. When using a model
+    function with ``create_react_agent``, LangGraph does not automatically bind
+    the ``tools=`` parameter — the function must return a pre-bound model.
     """
+    from src.tools import TOOLS
+
     key = None
     # Try runtime.context first (the official route)
     ctx = getattr(runtime, "context", None) or {}
@@ -40,7 +46,9 @@ def _dynamic_model(state: object, runtime: object) -> object:
     key = key or get_request_api_key()
     # Final fallback to global env
     key = key or config.OPENAI_API_KEY or "not-needed"
-    return get_chat_model(api_key=key)
+
+    model = get_chat_model(api_key=key)
+    return model.bind_tools(TOOLS)
 
 
 graph = create_react_agent(
