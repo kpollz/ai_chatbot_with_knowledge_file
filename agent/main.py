@@ -103,11 +103,6 @@ add_langgraph_fastapi_endpoint(
 )
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "agent": AGENT_NAME}
-
-
 def main():
     """Run the uvicorn server."""
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8123")))
