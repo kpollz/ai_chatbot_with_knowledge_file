@@ -7,8 +7,7 @@ The Machine Issue Solver agent, served over the AG-UI protocol.
 | Method | Path | |
 | ------ | ---- | --- |
 | `POST` | `/agent` | AG-UI |
-| `GET` | `/agent/health` | AG-UI health |
-| `GET` | `/health` | liveness |
+| `GET` | `/agent/health` | health check |
 
 CopilotKit connects with ``LangGraphHttpAgent({ url: "http://…:8123/agent" })``.
 

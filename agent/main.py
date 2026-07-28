@@ -90,11 +90,7 @@ app.add_middleware(
 )
 
 
-# Note: AG-UI endpoint mounted at /agent rather than /. Mounting at / causes the
-# health route to normalize to //health due to FastAPI's path handling. With /agent:
-# - POST /agent → AG-UI run
-# - GET /agent/health → AG-UI health (with agent object)
-# - GET /health → our simple liveness check
+# Note: AG-UI provides /agent/health automatically.
 add_langgraph_fastapi_endpoint(
     app=app,
     agent=LangGraphAGUIAgent(
