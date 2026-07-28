@@ -14,15 +14,21 @@ from src import config
 from src.logger import logger
 
 
-def get_chat_model(temperature: Optional[float] = None) -> BaseChatModel:
+def get_chat_model(
+    temperature: Optional[float] = None,
+    api_key: Optional[str] = None,
+) -> BaseChatModel:
     """Build the OpenAI-compatible chat model.
 
     Args:
         temperature: overrides ``config.LLM_TEMPERATURE``.
+        api_key: per-request API key for BYOK. Falls back to global env.
     """
     from langchain_openai import ChatOpenAI  # lazy import
 
     temp = config.LLM_TEMPERATURE if temperature is None else temperature
+    key = api_key or config.OPENAI_API_KEY or "not-needed"
+
     if not config.OPENAI_MODEL:
         logger.warning("OPENAI_MODEL is empty — set it in the environment.")
     if not config.OPENAI_BASE_URL:
@@ -30,7 +36,7 @@ def get_chat_model(temperature: Optional[float] = None) -> BaseChatModel:
 
     return ChatOpenAI(
         model=config.OPENAI_MODEL,
-        api_key=config.OPENAI_API_KEY or "not-needed",
+        api_key=key,
         base_url=config.OPENAI_BASE_URL or None,
         temperature=temp,
         streaming=True,

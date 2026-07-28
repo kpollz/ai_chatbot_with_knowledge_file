@@ -17,13 +17,14 @@ from contextlib import asynccontextmanager
 import uvicorn
 from ag_ui_langgraph import add_langgraph_fastapi_endpoint
 from copilotkit import LangGraphAGUIAgent
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from src.config import DATABASE_URI
+from src.context import set_request_api_key
 from src.graph import MAX_ITERATIONS, graph
 from src.langfuse_setup import langchain_handler
 from src.logger import logger
@@ -68,6 +69,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Machine Issue Solver — AG-UI agent", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def byok_middleware(request: Request, call_next):
+    """Store per-request API key for BYOK (Bring Your Own Key).
+
+    Reads ``x-openai-api-key`` header and stores it in a contextvar that the
+    dynamic model function retrieves. The header is optional — requests without
+    it fall back to the global ``OPENAI_API_KEY`` env var.
+    """
+    set_request_api_key(request.headers.get("x-openai-api-key"))
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -76,11 +90,11 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "agent": AGENT_NAME}
-
-
+# Note: AG-UI endpoint mounted at /agent rather than /. Mounting at / causes the
+# health route to normalize to //health due to FastAPI's path handling. With /agent:
+# - POST /agent → AG-UI run
+# - GET /agent/health → AG-UI health (with agent object)
+# - GET /health → our simple liveness check
 add_langgraph_fastapi_endpoint(
     app=app,
     agent=LangGraphAGUIAgent(
@@ -89,8 +103,13 @@ add_langgraph_fastapi_endpoint(
         graph=graph,
         config=_run_config(),
     ),
-    path="/",
+    path="/agent",
 )
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "agent": AGENT_NAME}
 
 
 def main():
