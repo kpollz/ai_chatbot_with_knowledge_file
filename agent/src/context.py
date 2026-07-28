@@ -13,7 +13,12 @@ Two mechanisms are wired:
 """
 
 import contextvars
-from typing import Optional, TypedDict
+from typing import Optional
+
+# pydantic >= 2.13 on Python < 3.12 rejects `typing.TypedDict` (it crashes
+# langgraph's config_schema build with PydanticUserError). Use the
+# typing_extensions form, which pydantic accepts on all versions.
+from typing_extensions import TypedDict
 
 _request_api_key: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "request_openai_api_key", default=None
